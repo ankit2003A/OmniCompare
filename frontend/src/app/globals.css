@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #ffffff;
+  --surface: #f5f6f8;
+  --line: #e6e8ec;
+  --ink: #14161a;
+  --muted: #6b7280;
+  --accent: #4f46e5;       /* action */
+  --cheap: #0e8a5e;        /* cheapest highlight */
+  --cheap-bg: #e6f6ef;
+  --fast: #b45309;         /* fastest highlight */
+  --fast-bg: #fdf1e3;
+  --warn: #b45309;
+  --ok: #0e8a5e;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-line: var(--line);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-accent: var(--accent);
+  --color-cheap: var(--cheap);
+  --color-cheap-bg: var(--cheap-bg);
+  --color-fast: var(--fast);
+  --color-fast-bg: var(--fast-bg);
+  --font-sans: "Inter Tight", "SF Pro Text", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --radius-card: 1.25rem;
+}
+
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; animation: none !important; }
+}
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
