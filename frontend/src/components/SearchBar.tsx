@@ -15,7 +15,8 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [sugg, setSugg] = useState<{ history: string[]; products: string[] }>({ history: [], products: [] });
   const box = useRef<HTMLFormElement>(null);
-  const { status: geo, detect } = useLocate(pincode, setPincode, (pin) => {
+  const [hideGeoNote, setHideGeoNote] = useState(false);
+  const { status: geo, detect } = useLocate(setPincode, (pin) => {
     // Already looking at results? Refresh them for the detected location.
     if (typeof window !== "undefined" && window.location.pathname === "/search") {
       const sp = new URLSearchParams(window.location.search);
@@ -77,6 +78,17 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
           Search
         </button>
       </div>
+
+      {geo === "denied" && !pincode && !hideGeoNote && (
+        <div className="mt-2 flex items-start gap-2 rounded-xl border border-fast/30 bg-fast-bg px-3 py-2 text-left text-xs text-fast">
+          <LocateFixed className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            Location is turned off for this site, so prices aren’t local. Tap the <b>🔒 / ⓘ icon</b> next to the web address →
+            <b> Location → Allow</b>, then reload — or just type your pincode.
+          </span>
+          <button type="button" onClick={() => setHideGeoNote(true)} className="font-medium underline">OK</button>
+        </div>
+      )}
 
       {open && items.length > 0 && (
         <ul className="absolute left-0 right-0 top-full z-40 mt-2 overflow-hidden rounded-2xl border border-line bg-white py-1 shadow-lg">

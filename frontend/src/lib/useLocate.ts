@@ -2,18 +2,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-const ASKED = "omnicompare.geoAsked";
+const SESSION = "omnicompare.geoThisVisit";
 
-/** Browser geolocation → pincode. Auto-runs once on the first visit (if no pincode yet);
- *  `detect()` re-runs it from the 📍 button. Never blocks the page if denied. */
-export function useLocate(pincode: string, setPincode: (p: string) => void, onFound?: (p: string) => void) {
-  const [status, setStatus] = useState<"idle" | "locating" | "denied" | "failed">("idle");
+export type GeoStatus = "idle" | "locating" | "denied" | "failed";
+
+/** Browser geolocation → pincode.
+ *  Runs automatically every time the site is opened (once per browser tab/visit) so the
+ *  pincode always matches where the shopper is now. `detect()` re-runs it from the 📍 button.
+ *  If the shopper has blocked location, browsers never show the prompt again — we report
+ *  "denied" so the UI can explain how to turn it back on. */
+export function useLocate(setPincode: (p: string) => void, onFound?: (p: string) => void) {
+  const [status, setStatus] = useState<GeoStatus>("idle");
   const cb = useRef(onFound);
   useEffect(() => { cb.current = onFound; }, [onFound]);
 
   const detect = useCallback(() => {
     if (typeof navigator === "undefined" || !navigator.geolocation) { setStatus("failed"); return; }
-    try { window.localStorage.setItem(ASKED, "1"); } catch {}
     setStatus("locating");
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
@@ -24,18 +28,21 @@ export function useLocate(pincode: string, setPincode: (p: string) => void, onFo
         } catch { setStatus("failed"); }
       },
       (err) => setStatus(err.code === err.PERMISSION_DENIED ? "denied" : "failed"),
-      { enableHighAccuracy: false, timeout: 10000, maximumAge: 30 * 60 * 1000 },
+      { enableHighAccuracy: false, timeout: 12000, maximumAge: 5 * 60 * 1000 },
     );
   }, [setPincode]);
 
   useEffect(() => {
-    let asked = false;
-    try { asked = window.localStorage.getItem(ASKED) === "1"; } catch {}
-    if (!pincode && !asked) {
-      const t = setTimeout(detect, 600);        // let the page paint first
-      return () => clearTimeout(t);
+    let done = false;
+    try { done = window.sessionStorage.getItem(SESSION) === "1"; window.sessionStorage.setItem(SESSION, "1"); } catch {}
+    if (done) {
+      // Same visit, new page: don't prompt again, but still surface a blocked permission.
+      navigator.permissions?.query({ name: "geolocation" }).then((p) => p.state === "denied" && setStatus("denied")).catch(() => {});
+      return;
     }
-  }, []);                                       // eslint-disable-line react-hooks/exhaustive-deps
+    const t = setTimeout(detect, 500);          // let the page paint first, then ask
+    return () => clearTimeout(t);
+  }, [detect]);
 
   return { status, detect };
 }
