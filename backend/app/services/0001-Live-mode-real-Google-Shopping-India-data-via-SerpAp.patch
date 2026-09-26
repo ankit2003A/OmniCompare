@@ -1,0 +1,854 @@
+From 14d984c5c22203b9703d053e0077af0c137ee56a Mon Sep 17 00:00:00 2001
+From: WMAI <wmai@wattmonk.com>
+Date: Sat, 26 Sep 2026 07:15:49 +0000
+Subject: [PATCH] Live mode: real Google Shopping India data via SerpApi
+
+- SerpApi google_shopping search -> identity engine -> product groups
+- Immersive product API adds every store with direct links (Amazon, Flipkart, Croma...)
+- /api/go/{id} redirects to the real store page; store-search fallback
+- Real thumbnail dHash for image matching; 5G/RAM/storage attribute fixes
+- UI: demo labels only in demo mode; live error banner
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_014hvg9SnN61Y6rkanuaXqHq
+---
+ backend/app/api/routes.py                     |  19 +-
+ backend/app/config.py                         |   6 +
+ backend/app/live/__init__.py                  |   1 +
+ backend/app/live/image_hash.py                |  30 ++
+ backend/app/live/serpapi.py                   |  42 +++
+ backend/app/live/service.py                   | 313 ++++++++++++++++++
+ backend/app/matching/engine.py                |   6 +-
+ backend/app/models.py                         |   9 +
+ backend/app/seed/seed.py                      |   7 +-
+ backend/app/services/comparison.py            |  12 +-
+ backend/app/services/normalizer.py            |  14 +-
+ backend/requirements.txt                      |   1 +
+ backend/tests/test_live.py                    |  40 +++
+ frontend/src/app/layout.tsx                   |   4 +-
+ frontend/src/app/page.tsx                     |   2 +-
+ .../app/product/[id]/ProductDetailView.tsx    |   2 +-
+ frontend/src/app/search/SearchResults.tsx     |  11 +-
+ frontend/src/components/ComparisonTable.tsx   |   5 +-
+ frontend/src/lib/types.ts                     |   4 +
+ 19 files changed, 509 insertions(+), 19 deletions(-)
+ create mode 100644 backend/app/live/__init__.py
+ create mode 100644 backend/app/live/image_hash.py
+ create mode 100644 backend/app/live/serpapi.py
+ create mode 100644 backend/app/live/service.py
+ create mode 100644 backend/tests/test_live.py
+
+diff --git a/backend/app/api/routes.py b/backend/app/api/routes.py
+index d45a094..34375fd 100644
+--- a/backend/app/api/routes.py
++++ b/backend/app/api/routes.py
+@@ -12,6 +12,9 @@ from app.services.comparison import serialize_listing, serialize_group, group_ex
+ from app.services.sorting import sort_listings, SORT_OPTIONS
+ from app.services.delivery import get_delivery_estimate
+ from app.config import get_settings
++from app.services.search import _passes
++from app.live import service as live
++from fastapi.responses import RedirectResponse
+ 
+ router = APIRouter(prefix="/api")
+ 
+@@ -33,9 +36,20 @@ def search(q: str = Query(..., min_length=1), pincode: str | None = None, sort:
+         "min_rating": min_rating, "brands": brands.split(",") if brands else None,
+         "in_stock_only": in_stock_only,
+     }
++    if get_settings().live_mode:
++        return live.live_search(db, q, pincode, sort, filters, _passes)
+     return search_products(db, q, pincode, sort, filters)
+ 
+ 
++@router.get("/go/{listing_id}")
++def go_to_store(listing_id: int, db: Session = Depends(get_db)):
++    """Redirect to the real store page for a live listing (resolved lazily, then cached)."""
++    url = live.resolve_store_link(db, listing_id)
++    if not url:
++        raise HTTPException(404, "Store link not available")
++    return RedirectResponse(url, status_code=302)
++
++
+ @router.get("/search/suggestions")
+ def search_suggestions(q: str = "", db: Session = Depends(get_db)):
+     return suggestions(db, q)
+@@ -77,13 +91,16 @@ def _group_matches(db: Session, ids: list[int], types=("EXACT_MATCH",)):
+ def product_detail(product_id: int, pincode: str | None = None, sort: str = "price_asc",
+                    db: Session = Depends(get_db)):
+     product = _product_or_404(db, product_id)
++    live_error = live.enrich_product(db, product) if get_settings().live_mode else None
+     rows = _group_listings(db, product_id)
+     listings = sort_listings([serialize_listing(l) for l in rows], sort)
+     explanation = group_explanation(_group_matches(db, [l.id for l in rows]))
+     group = serialize_group(product, listings, explanation)
+     group["similar_products"] = _similar(db, product, [l.id for l in rows])
+     group["images"] = list(dict.fromkeys([l["image_url"] for l in listings]))
+-    group["delivery_is_demo"] = True
++    group["delivery_is_demo"] = not get_settings().live_mode
++    group["live"] = get_settings().live_mode
++    group["error"] = live_error
+     group["pincode"] = pincode
+     return group
+ 
+diff --git a/backend/app/config.py b/backend/app/config.py
+index c8250c9..1a99193 100644
+--- a/backend/app/config.py
++++ b/backend/app/config.py
+@@ -20,6 +20,12 @@ class Settings(BaseSettings):
+     embedding_provider: str = "hashing"
+     image_similarity_provider: str = "placeholder"
+     openai_api_key: str = ""
++    # Live mode: real Google Shopping (India) data via SerpApi. Empty → demo catalog.
++    serpapi_api_key: str = ""
++
++    @property
++    def live_mode(self) -> bool:
++        return bool(self.serpapi_api_key)
+ 
+     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+ 
+diff --git a/backend/app/live/__init__.py b/backend/app/live/__init__.py
+new file mode 100644
+index 0000000..19b5bc7
+--- /dev/null
++++ b/backend/app/live/__init__.py
+@@ -0,0 +1 @@
++"""Live marketplace data (SerpApi Google Shopping India)."""
+diff --git a/backend/app/live/image_hash.py b/backend/app/live/image_hash.py
+new file mode 100644
+index 0000000..7cacd4b
+--- /dev/null
++++ b/backend/app/live/image_hash.py
+@@ -0,0 +1,30 @@
++"""Real perceptual hashes (64-bit dHash) for live product thumbnails — Pillow only."""
++from concurrent.futures import ThreadPoolExecutor
++from io import BytesIO
++import httpx
++
++
++def dhash(data: bytes) -> str:
++    from PIL import Image
++    img = Image.open(BytesIO(data)).convert("L").resize((9, 8), Image.LANCZOS)
++    px = list(img.getdata())
++    bits = 0
++    for row in range(8):
++        for col in range(8):
++            bits = (bits << 1) | (px[row * 9 + col] > px[row * 9 + col + 1])
++    return f"{bits:016x}"
++
++
++def _one(client: httpx.Client, url: str) -> str:
++    if not url:
++        return ""
++    try:
++        r = client.get(url, timeout=6, follow_redirects=True)
++        return dhash(r.content) if r.status_code == 200 else ""
++    except Exception:
++        return ""
++
++
++def hash_images(urls: list[str]) -> list[str]:
++    with httpx.Client(headers={"User-Agent": "Mozilla/5.0 OmniCompare"}) as client, ThreadPoolExecutor(12) as pool:
++        return list(pool.map(lambda u: _one(client, u), urls))
+diff --git a/backend/app/live/serpapi.py b/backend/app/live/serpapi.py
+new file mode 100644
+index 0000000..eabc9b5
+--- /dev/null
++++ b/backend/app/live/serpapi.py
+@@ -0,0 +1,42 @@
++"""Thin client for SerpApi's Google Shopping + Google Immersive Product engines (India).
++
++Real products, real prices, real images and real store links. Every call costs one
++SerpApi search, so callers cache results in the database.
++"""
++import httpx
++from app.config import get_settings
++
++BASE = "https://serpapi.com/search.json"
++
++
++class LiveDataError(RuntimeError):
++    pass
++
++
++def _get(params: dict) -> dict:
++    key = get_settings().serpapi_api_key
++    if not key:
++        raise LiveDataError("SERPAPI_API_KEY is not configured")
++    try:
++        r = httpx.get(BASE, params={**params, "api_key": key}, timeout=25)
++    except httpx.HTTPError as e:
++        raise LiveDataError(f"SerpApi request failed: {e}") from e
++    data = r.json() if r.headers.get("content-type", "").startswith("application/json") else {}
++    if r.status_code != 200 or data.get("error"):
++        # "Google hasn't returned any results" is not an error for us — just empty.
++        msg = data.get("error") or f"HTTP {r.status_code}"
++        if "hasn't returned any results" in msg:
++            return {}
++        raise LiveDataError(msg)
++    return data
++
++
++def shopping_search(query: str) -> list[dict]:
++    data = _get({"engine": "google_shopping", "q": query, "gl": "in", "hl": "en",
++                 "google_domain": "google.co.in", "location": "India"})
++    return data.get("shopping_results", []) or []
++
++
++def product_stores(page_token: str) -> dict:
++    data = _get({"engine": "google_immersive_product", "page_token": page_token, "more_stores": "true"})
++    return data.get("product_results", {}) or {}
+diff --git a/backend/app/live/service.py b/backend/app/live/service.py
+new file mode 100644
+index 0000000..7ceb06c
+--- /dev/null
++++ b/backend/app/live/service.py
+@@ -0,0 +1,313 @@
++"""Live mode: real Google Shopping (India) results → matcher → product groups.
++
++Flow for a search:
++  SerpApi google_shopping → RawListing per result → cluster() (same identity engine as the
++  demo) → persisted as Product/Listing rows → serialized exactly like demo groups.
++
++Store links: a Google Shopping result only carries a Google link. `resolve_store_link`
++calls the Immersive Product engine once per product, which returns every store selling it
++with its direct URL (Amazon, Flipkart, Croma, …). Those stores are also added to the
++product group, so the product page becomes a real multi-store price comparison.
++"""
++import hashlib
++import threading
++import re
++from datetime import datetime, timedelta, timezone
++from urllib.parse import urlparse, parse_qs
++from sqlalchemy import select
++from sqlalchemy.orm import Session, joinedload
++from app.adapters.base import RawListing
++from app.matching.clustering import cluster
++from app.matching.engine import product_text
++from app.models import Listing, Marketplace, Product, ProductMatch, LiveQuery
++from app.services.normalizer import extract_attributes, normalize_title, tokens
++from app.services.comparison import serialize_listing, serialize_group, group_explanation
++from app.services.sorting import sort_listings, sort_groups
++from app.live import serpapi
++from app.live.image_hash import hash_images
++
++CACHE_TTL = timedelta(hours=6)
++_LOCK = threading.Lock()   # one ingest at a time (the UI can fire duplicate searches)
++
++KNOWN_STORES = [  # (match substring, slug, display name, colour)
++    ("amazon", "amazon", "Amazon", "#FF9900"), ("flipkart", "flipkart", "Flipkart", "#2874F0"),
++    ("myntra", "myntra", "Myntra", "#FF3F6C"), ("ajio", "ajio", "AJIO", "#2C4152"),
++    ("nykaa", "nykaa", "Nykaa", "#FC2779"), ("meesho", "meesho", "Meesho", "#9F2089"),
++    ("croma", "croma", "Croma", "#00A99D"), ("reliance digital", "reliance-digital", "Reliance Digital", "#E42529"),
++    ("jiomart", "jiomart", "JioMart", "#0078AD"), ("tata cliq", "tatacliq", "Tata CLiQ", "#DA1C5C"),
++    ("vijay sales", "vijay-sales", "Vijay Sales", "#E31E24"), ("snapdeal", "snapdeal", "Snapdeal", "#E40046"),
++    ("bigbasket", "bigbasket", "BigBasket", "#84C225"), ("blinkit", "blinkit", "Blinkit", "#F8CB46"),
++    ("zepto", "zepto", "Zepto", "#5E17EB"), ("swiggy", "swiggy-instamart", "Swiggy Instamart", "#FC8019"),
++    ("pepperfry", "pepperfry", "Pepperfry", "#F16521"), ("decathlon", "decathlon", "Decathlon", "#0082C3"),
++    ("apple", "apple", "Apple Store", "#111111"), ("samsung", "samsung", "Samsung Shop", "#1428A0"),
++]
++WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
++
++
++def _store(source: str) -> tuple[str, str, str]:
++    s = (source or "Store").lower()
++    for sub, slug, name, colour in KNOWN_STORES:
++        if sub in s:
++            return slug, name, colour
++    slug = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:40] or "store"
++    return slug, source.strip()[:90] or "Store", "#555555"
++
++
++def _marketplace(db: Session, source: str, link: str = "") -> Marketplace:
++    slug, name, colour = _store(source)
++    m = db.execute(select(Marketplace).where(Marketplace.slug == slug)).scalar_one_or_none()
++    if m is None:
++        host = urlparse(link).netloc if link else ""
++        m = Marketplace(slug=slug, name=name, logo_url="", base_url=f"https://{host}" if host else "",
++                        brand_color=colour)
++        db.add(m)
++        db.flush()
++    return m
++
++
++def _delivery(text: str | None) -> tuple[int, str]:
++    """Best-effort days from Google's delivery text; unknown → 5 with the store's own text."""
++    t = (text or "").lower()
++    if not t:
++        return 5, "See store for delivery"
++    if "today" in t:
++        return 0, text
++    if "tomorrow" in t:
++        return 1, text
++    m = re.search(r"(\d+)\s*(?:-\s*\d+\s*)?(?:business\s+)?days?", t)
++    if m:
++        return int(m.group(1)), text
++    for i, d in enumerate(WEEKDAYS):
++        if re.search(rf"\b{d}", t):
++            delta = (i - datetime.now(timezone.utc).weekday()) % 7 or 7
++            return delta, text
++    return 5, text
++
++
++def _page_token(r: dict) -> str:
++    if r.get("immersive_product_page_token"):
++        return r["immersive_product_page_token"]
++    api = r.get("serpapi_immersive_product_api") or ""
++    return (parse_qs(urlparse(api).query).get("page_token") or [""])[0]
++
++
++def _num(v, default=0.0) -> float:
++    try:
++        return float(v)
++    except (TypeError, ValueError):
++        return default
++
++
++def _raw_from_result(r: dict) -> RawListing | None:
++    price = _num(r.get("extracted_price"))
++    title = (r.get("title") or "").strip()
++    if not price or not title:
++        return None
++    source = r.get("source") or "Store"
++    slug, _, _ = _store(source)
++    pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
++    days, dtext = _delivery(r.get("delivery"))
++    return RawListing(
++        listing_id=f"g-{pid}-{slug}"[:100], marketplace=slug, seller_name=source, title=title,
++        description=r.get("snippet") or "", brand=None, category="", price=price,
++        mrp=max(price, _num(r.get("extracted_old_price"), price)), currency="INR",
++        image_url=r.get("thumbnail") or "", image_hash="", rating=_num(r.get("rating")),
++        review_count=int(_num(r.get("reviews"))), delivery_days=days, availability="in_stock",
++        product_attributes={"_live": True, "_delivery_text": dtext, "_page_token": _page_token(r),
++                            "_google_link": r.get("product_link") or "", "_source": source,
++                            "_position": r.get("position") or 99},
++        product_url="",
++    )
++
++
++def _listing_row(db: Session, l: RawListing, product_id: int, source: str, link: str = "") -> Listing:
++    attrs = {**extract_attributes(l), **{k: v for k, v in l.product_attributes.items() if k.startswith("_")}}
++    m = _marketplace(db, source, link)
++    row = Listing(
++        listing_id=l.listing_id, product_id=product_id, marketplace_id=m.id, seller_name=l.seller_name,
++        title=l.title[:300], description=l.description or "", brand=l.brand, category=l.category,
++        price=l.price, mrp=l.mrp, discount_percentage=l.discount_percentage, currency="INR",
++        image_url=l.image_url[:500], image_hash=l.image_hash or "", rating=l.rating, review_count=l.review_count,
++        delivery_days=l.delivery_days, delivery_date="", delivery_text=attrs["_delivery_text"][:100],
++        availability=l.availability, product_attributes=attrs, normalized_title=normalize_title(l.title)[:300],
++        search_text=" ".join(tokens(product_text(l, attrs))), product_url="",
++    )
++    db.add(row)
++    db.flush()
++    row.product_url = link or f"/api/go/{row.id}"
++    return row
++
++
++def _ingest(db: Session, raws: list[RawListing]) -> list[int]:
++    """Persist results; returns product ids in Google rank order."""
++    existing = {l.listing_id: l for l in db.execute(
++        select(Listing).where(Listing.listing_id.in_([r.listing_id for r in raws]))).scalars().all()}
++    fresh = []
++    for r in raws:
++        row = existing.get(r.listing_id)
++        if row is not None:           # refresh price on an already-known listing
++            row.price, row.mrp = r.price, r.mrp
++            row.discount_percentage = r.discount_percentage
++        else:
++            fresh.append(r)
++    for r, h in zip(fresh, hash_images([r.image_url for r in fresh])):
++        r.image_hash = h
++    groups, pairs = cluster(fresh) if fresh else ([], [])
++    rows: dict[str, Listing] = {}
++    for g in groups:
++        p = Product(canonical_title=g.canonical_title[:300], brand=g.brand, category=g.category,
++                    description=g.description, canonical_image=g.canonical_image,
++                    attributes={k: v for k, v in g.attributes.items() if not str(k).startswith("_")})
++        db.add(p)
++        db.flush()
++        for l in g.listings:
++            rows[l.listing_id] = _listing_row(db, l, p.id, l.seller_name)
++    for pm in pairs:
++        r = pm.result
++        db.add(ProductMatch(listing_a_id=rows[pm.a].id, listing_b_id=rows[pm.b].id, text_score=r.text_score,
++                            image_score=r.image_score, attribute_score=r.attribute_score,
++                            combined_score=r.combined_score, match_type=r.match_type,
++                            reasons={"reasons": [{"label": x.label, "status": x.status} for x in r.reasons]}))
++    db.commit()
++    order: list[int] = []
++    for r in raws:
++        row = existing.get(r.listing_id) or rows.get(r.listing_id)
++        if row is not None and row.product_id not in order:
++            order.append(row.product_id)
++    return order
++
++
++def _norm_query(q: str) -> str:
++    return re.sub(r"\s+", " ", q.strip().lower())[:200]
++
++
++def live_search(db: Session, query: str, pincode: str | None, sort: str, filters: dict, passes) -> dict:
++    with _LOCK:
++        return _live_search(db, query, pincode, sort, filters, passes)
++
++
++def _live_search(db: Session, query: str, pincode: str | None, sort: str, filters: dict, passes) -> dict:
++    key = _norm_query(query)
++    cached = db.execute(select(LiveQuery).where(LiveQuery.query == key)).scalar_one_or_none()
++    now = datetime.now(timezone.utc)
++    error = None
++    if cached and now - cached.fetched_at.replace(tzinfo=timezone.utc) < CACHE_TTL:
++        product_ids = cached.product_ids or []
++    else:
++        try:
++            raws = [x for x in (_raw_from_result(r) for r in serpapi.shopping_search(query)) if x]
++            product_ids = _ingest(db, raws)
++            if cached:
++                cached.product_ids, cached.fetched_at = product_ids, now
++            else:
++                db.add(LiveQuery(query=key, product_ids=product_ids, fetched_at=now))
++            db.commit()
++        except serpapi.LiveDataError as e:
++            db.rollback()
++            error = str(e)
++            product_ids = cached.product_ids if cached else []
++
++    groups = []
++    for rank, pid in enumerate(product_ids):
++        product = db.get(Product, pid)
++        if product is None:
++            continue
++        rows = db.execute(select(Listing).options(joinedload(Listing.marketplace))
++                          .where(Listing.product_id == pid)).scalars().all()
++        listings = [l for l in (serialize_listing(x, 1 - rank / 100) for x in rows) if passes(l, filters)]
++        if not listings:
++            continue
++        ids = [x.id for x in rows]
++        matches = db.execute(select(ProductMatch).where(
++            ProductMatch.listing_a_id.in_(ids), ProductMatch.listing_b_id.in_(ids),
++            ProductMatch.match_type == "EXACT_MATCH")).scalars().all()
++        groups.append(serialize_group(product, sort_listings(listings, sort), group_explanation(matches),
++                                      relevance=1 - rank / 100))
++    groups = sort_groups(groups, sort)
++    return {"query": query, "pincode": pincode, "sort": sort, "groups": groups,
++            "total_groups": len(groups), "total_listings": sum(g["listing_count"] for g in groups),
++            "delivery_is_demo": False, "live": True, "error": error}
++
++
++def _same_store(a: str, b: str) -> bool:
++    return _store(a)[0] == _store(b)[0]
++
++
++def enrich_product(db: Session, product: Product) -> str | None:
++    """Fetch every store selling this product (one SerpApi call, cached on the product)."""
++    with _LOCK:
++        db.refresh(product)
++        return _enrich(db, product)
++
++
++def _enrich(db: Session, product: Product) -> str | None:
++    if (product.attributes or {}).get("_enriched"):
++        return None
++    rows = db.execute(select(Listing).options(joinedload(Listing.marketplace))
++                      .where(Listing.product_id == product.id)).scalars().all()
++    token = next((r.product_attributes.get("_page_token") for r in rows if r.product_attributes.get("_page_token")), "")
++    if not token:
++        return None
++    try:
++        res = serpapi.product_stores(token)
++    except serpapi.LiveDataError as e:
++        return str(e)
++    base = rows[0]
++    for s in res.get("stores", []) or []:
++        link, name = s.get("link") or "", s.get("name") or "Store"
++        price = _num(s.get("extracted_price"))
++        if not link or not price:
++            continue
++        match = next((r for r in rows if _same_store(r.seller_name, name)), None)
++        if match is not None:        # the search listing → give it the direct store link
++            match.product_url = link
++            match.price = price
++            match.product_attributes = {**match.product_attributes, "_direct": True}
++            continue
++        details = " · ".join(s.get("details_and_offers") or [])
++        days, dtext = _delivery(details or s.get("shipping"))
++        raw = RawListing(
++            listing_id=f"s-{product.id}-{_store(name)[0]}"[:100], marketplace=_store(name)[0], seller_name=name,
++            title=s.get("title") or base.title, description="", brand=None, category="", price=price,
++            mrp=max(price, _num(s.get("extracted_original_price"), price)), currency="INR",
++            image_url=base.image_url, image_hash="", rating=_num(s.get("rating")),
++            review_count=int(_num(s.get("reviews"))), delivery_days=days, availability="in_stock",
++            product_attributes={"_live": True, "_delivery_text": dtext, "_direct": True, "_source": name}, product_url=link,
++        )
++        if db.execute(select(Listing).where(Listing.listing_id == raw.listing_id)).scalar_one_or_none() is None:
++            _listing_row(db, raw, product.id, name, link)
++    product.attributes = {**(product.attributes or {}), "_enriched": True}
++    db.commit()
++    return None
++
++
++def resolve_store_link(db: Session, listing_id: int) -> str:
++    row = db.get(Listing, listing_id)
++    if row is None:
++        return ""
++    if row.product_attributes.get("_direct") and not row.product_url.startswith("/api/go/"):
++        return row.product_url
++    product = db.get(Product, row.product_id)
++    if product is not None:
++        enrich_product(db, product)
++        db.refresh(row)
++        if not row.product_url.startswith("/api/go/"):
++            return row.product_url
++    return row.product_attributes.get("_google_link") or store_search_url(row.seller_name, row.title)
++
++
++STORE_SEARCH = {
++    "amazon": "https://www.amazon.in/s?k={q}", "flipkart": "https://www.flipkart.com/search?q={q}",
++    "myntra": "https://www.myntra.com/{q}", "ajio": "https://www.ajio.com/search/?text={q}",
++    "nykaa": "https://www.nykaa.com/search/result/?q={q}", "meesho": "https://www.meesho.com/search?q={q}",
++    "croma": "https://www.croma.com/searchB?q={q}", "reliance-digital": "https://www.reliancedigital.in/products?q={q}",
++    "jiomart": "https://www.jiomart.com/search/{q}", "tatacliq": "https://www.tatacliq.com/search/?searchCategory=all&text={q}",
++    "vijay-sales": "https://www.vijaysales.com/search/{q}", "snapdeal": "https://www.snapdeal.com/search?keyword={q}",
++}
++
++
++def store_search_url(source: str, title: str) -> str:
++    from urllib.parse import quote_plus
++    q = quote_plus(" ".join(title.split()[:8]))
++    tpl = STORE_SEARCH.get(_store(source)[0])
++    return tpl.format(q=q) if tpl else f"https://www.google.com/search?tbm=shop&q={q}"
+diff --git a/backend/app/matching/engine.py b/backend/app/matching/engine.py
+index b10f266..df80e7b 100644
+--- a/backend/app/matching/engine.py
++++ b/backend/app/matching/engine.py
+@@ -18,15 +18,15 @@ EXACT_MATCH, SIMILAR, DIFFERENT = "EXACT_MATCH", "SIMILAR", "DIFFERENT"
+ # Attribute weights for attribute_similarity; only attributes present on BOTH sides count.
+ ATTRIBUTE_WEIGHTS = {"brand": 3.0, "model": 3.0, "category": 2.0, "colour": 2.0, "size": 2.0,
+                      "quantity": 2.0, "shade": 2.0, "wattage": 2.0, "capacity": 2.0,
+-                     "variant": 1.5, "material": 1.0, "fit": 1.0, "gender": 1.0, "storage": 1.0}
++                     "variant": 1.5, "material": 1.0, "fit": 1.0, "gender": 1.0, "storage": 2.0, "ram": 1.5}
+ # Attributes where a mismatch means "not the same purchasable item" (caps at SIMILAR)
+-VARIANT_ATTRIBUTES = ("size", "quantity", "shade", "model", "wattage", "capacity", "variant", "colour", "storage")
++VARIANT_ATTRIBUTES = ("size", "quantity", "shade", "model", "wattage", "capacity", "variant", "colour", "storage", "ram")
+ # Attributes where a mismatch means "different product entirely" (caps at DIFFERENT)
+ IDENTITY_ATTRIBUTES = ("brand", "category")
+ LABELS = {"brand": "brand", "category": "product category", "colour": "colour", "size": "size",
+           "quantity": "quantity", "shade": "shade", "model": "model", "material": "material",
+           "fit": "fit", "gender": "gender", "wattage": "wattage", "capacity": "capacity",
+-          "variant": "variant", "storage": "storage"}
++          "variant": "variant", "storage": "storage", "ram": "RAM"}
+ 
+ 
+ @dataclass
+diff --git a/backend/app/models.py b/backend/app/models.py
+index 7e00478..2af19a1 100644
+--- a/backend/app/models.py
++++ b/backend/app/models.py
+@@ -73,6 +73,15 @@ class ProductMatch(Base):
+     reasons: Mapped[dict] = mapped_column(JSON, default=dict)
+ 
+ 
++class LiveQuery(Base):
++    """Cache of live search results (query → product ids in rank order) to save API calls."""
++    __tablename__ = "live_queries"
++    id: Mapped[int] = mapped_column(primary_key=True)
++    query: Mapped[str] = mapped_column(String(200), unique=True)
++    product_ids: Mapped[list] = mapped_column(JSON, default=list)
++    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
++
++
+ class SearchHistory(Base):
+     __tablename__ = "search_history"
+     id: Mapped[int] = mapped_column(primary_key=True)
+diff --git a/backend/app/seed/seed.py b/backend/app/seed/seed.py
+index 8829e5e..2e521ee 100644
+--- a/backend/app/seed/seed.py
++++ b/backend/app/seed/seed.py
+@@ -4,7 +4,7 @@ Run:  python -m app.seed.seed
+ """
+ from sqlalchemy.orm import Session
+ from app.db import Base, engine, SessionLocal
+-from app.models import Marketplace, Product, Listing, ProductMatch, SearchHistory
++from app.models import Marketplace, Product, Listing, ProductMatch, SearchHistory, LiveQuery
+ from app.adapters.mock import ADAPTERS
+ from app.matching.clustering import cluster
+ from app.matching.engine import product_text
+@@ -17,7 +17,7 @@ def run_seed(db: Session | None = None, verbose: bool = True) -> dict:
+     Base.metadata.create_all(bind=engine if own else db.get_bind())
+     db = db or SessionLocal()
+     try:
+-        for model in (ProductMatch, Listing, Product, Marketplace, SearchHistory):
++        for model in (ProductMatch, Listing, Product, Marketplace, SearchHistory, LiveQuery):
+             db.query(model).delete()
+         db.commit()
+ 
+@@ -29,7 +29,8 @@ def run_seed(db: Session | None = None, verbose: bool = True) -> dict:
+             mkts[slug] = m
+         db.flush()
+ 
+-        raw = [l for a in ADAPTERS.values() for l in a.all_listings()]
++        from app.config import get_settings
++        raw = [] if get_settings().live_mode else [l for a in ADAPTERS.values() for l in a.all_listings()]
+         groups, pairs = cluster(raw)
+ 
+         listing_rows: dict[str, Listing] = {}
+diff --git a/backend/app/services/comparison.py b/backend/app/services/comparison.py
+index 5be6fd4..fc4b46b 100644
+--- a/backend/app/services/comparison.py
++++ b/backend/app/services/comparison.py
+@@ -6,7 +6,11 @@ from app.services.delivery import build_delivery_info
+ 
+ 
+ def serialize_listing(l: Listing, relevance: float | None = None) -> dict:
+-    delivery = build_delivery_info(l.delivery_days, l.availability != "out_of_stock")
++    pa = l.product_attributes or {}
++    live = bool(pa.get("_live"))
++    delivery = build_delivery_info(l.delivery_days, l.availability != "out_of_stock", is_demo=not live)
++    if live:
++        delivery.deliveryText = pa.get("_delivery_text") or delivery.deliveryText
+     d = {
+         "id": l.id, "listing_id": l.listing_id, "product_id": l.product_id,
+         "marketplace": {"slug": l.marketplace.slug, "name": l.marketplace.name,
+@@ -18,7 +22,8 @@ def serialize_listing(l: Listing, relevance: float | None = None) -> dict:
+         "review_count": l.review_count, "availability": l.availability,
+         "delivery_days": delivery.deliveryDays, "delivery_date": delivery.deliveryDate,
+         "delivery_text": delivery.deliveryText, "delivery": delivery.as_dict(),
+-        "product_attributes": l.product_attributes, "product_url": l.product_url,
++        "product_attributes": {k: v for k, v in pa.items() if not k.startswith("_")}, "product_url": l.product_url,
++        "is_live": live,
+     }
+     if relevance is not None:
+         d["relevance"] = relevance
+@@ -79,7 +84,8 @@ def serialize_group(product: Product, listings: list[dict], explanation: dict |
+     d = {
+         "id": product.id, "canonical_title": product.canonical_title, "brand": product.brand,
+         "category": product.category, "description": product.description,
+-        "canonical_image": product.canonical_image, "attributes": product.attributes,
++        "canonical_image": product.canonical_image,
++        "attributes": {k: v for k, v in (product.attributes or {}).items() if not str(k).startswith("_")},
+         "listing_count": len(listings), "marketplaces": marketplaces,
+         "listings": listings, "match": explanation or {"confidence": None, "reasons": []},
+         **cmp,
+diff --git a/backend/app/services/normalizer.py b/backend/app/services/normalizer.py
+index a1af2fc..469b1c6 100644
+--- a/backend/app/services/normalizer.py
++++ b/backend/app/services/normalizer.py
+@@ -114,7 +114,16 @@ def extract_attributes(listing: RawListing) -> dict:
+         if re.search(rf"\b{re.escape(word)}\b", text):
+             attrs["gender"] = g
+             break
+-    qty = re.search(r"\b(\d+(?:\.\d+)?)(ml|g|l|gb)\b", text)
++    text = re.sub(r"\b[2345]g\b", " ", text)              # network generation (4G/5G), not grams
++    ram = re.search(r"\b(\d{1,2})gb\s*ram\b|\bram\s*(\d{1,2})gb\b", text)
++    if ram:
++        attrs["ram"] = f"{ram.group(1) or ram.group(2)} gb"
++    sizes = [(float(n) * (1024 if u == "tb" else 1), f"{n} {u}") for n, u in re.findall(r"\b(\d+(?:\.\d+)?)\s?(gb|tb)\b", text)]
++    if ram:
++        sizes = [s for s in sizes if s[1] != attrs["ram"]]
++    if sizes:
++        attrs["storage"] = max(sizes)[1]
++    qty = re.search(r"\b(\d+(?:\.\d+)?)(ml|g|kg|l)\b", text)
+     if qty:
+         attrs["quantity"] = f"{qty.group(1)} {qty.group(2)}"
+     watt = re.search(r"\b(\d+)w\b", text)
+@@ -144,6 +153,9 @@ def extract_attributes(listing: RawListing) -> dict:
+         elif key == "quantity":
+             m = re.match(r"(\d+(?:\.\d+)?)\s*([a-z]+)", val)
+             val = f"{m.group(1)} {m.group(2)}" if m else val
++        elif key in ("storage", "ram"):
++            m = re.match(r"(\d+(?:\.\d+)?)\s*(gb|tb)", val)
++            val = f"{m.group(1)} {m.group(2)}" if m else val
+         elif key == "shade":
+             # shade codes like "MR1 Red Coat" / "Red Coat MR1" → canonical code
+             code = re.search(r"\b([a-z]{1,3}\d{1,3})\b", val)
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index b6e706a..651f1aa 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -6,3 +6,4 @@ pydantic-settings>=2.3
+ httpx>=0.27
+ pytest>=8.2
+ psycopg2-binary>=2.9 ; platform_system != "Windows"
++Pillow>=10.0
+diff --git a/backend/tests/test_live.py b/backend/tests/test_live.py
+new file mode 100644
+index 0000000..f253181
+--- /dev/null
++++ b/backend/tests/test_live.py
+@@ -0,0 +1,40 @@
++"""Live-mode (SerpApi) pipeline, with the network stubbed out."""
++from app.adapters.base import RawListing
++from app.matching.engine import match_listings, EXACT_MATCH
++from app.services.normalizer import extract_attributes
++from app.live import service
++
++
++def _raw(title, source="Amazon.in"):
++    return service._raw_from_result({"title": title, "source": source, "extracted_price": 16999,
++                                     "product_id": title[:10], "thumbnail": ""})
++
++
++def test_5g_is_not_a_quantity_and_ram_storage_split():
++    a = extract_attributes(_raw("Redmi Note 15 5G (Mist Purple, 8GB RAM, 128GB Storage)"))
++    assert "quantity" not in a
++    assert a["ram"] == "8 gb" and a["storage"] == "128 gb"
++
++
++def test_same_phone_across_stores_is_exact_but_storage_variant_is_not():
++    amz = _raw("Redmi Note 15 5G (Mist Purple, 8GB RAM, 128GB Storage)")
++    flp = _raw("REDMI Note 15 5G (Mist Purple, 128 GB) (8 GB RAM)", "Flipkart")
++    big = _raw("REDMI Note 15 5G (Mist Purple, 256 GB) (8 GB RAM)", "Flipkart")
++    for r in (amz, flp, big):
++        r.image_hash = "ffff0000ffff0000"
++    from app.matching.engine import set_corpus
++    set_corpus([amz, flp, big])
++    assert match_listings(amz, flp).match_type == EXACT_MATCH
++    assert match_listings(amz, big).match_type != EXACT_MATCH
++
++
++def test_delivery_text_parsing():
++    assert service._delivery("Free delivery tomorrow")[0] == 1
++    assert service._delivery("Delivery in 3 days")[0] == 3
++    assert service._delivery(None) == (5, "See store for delivery")
++
++
++def test_store_normalisation_and_fallback_link():
++    assert service._store("Amazon.in")[0] == "amazon"
++    assert service._store("Reliance Digital")[0] == "reliance-digital"
++    assert service.store_search_url("Flipkart", "Redmi Note 15").startswith("https://www.flipkart.com/search?q=")
+diff --git a/frontend/src/app/layout.tsx b/frontend/src/app/layout.tsx
+index ea6cd53..5928d90 100644
+--- a/frontend/src/app/layout.tsx
++++ b/frontend/src/app/layout.tsx
+@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
+ 
+ export const metadata: Metadata = {
+   title: "OmniCompare — Find the same product. Compare every seller.",
+-  description: "AI-powered product matching across Amazon, Flipkart, Meesho, Myntra, Nykaa and AJIO. Demo data.",
++  description: "AI-powered product matching across Amazon, Flipkart, Croma, Myntra, Nykaa and more.",
+ };
+ 
+ export default function RootLayout({ children }: { children: React.ReactNode }) {
+@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode })
+         <main className="flex-1">{children}</main>
+         <footer className="border-t border-line mt-16">
+           <div className="mx-auto max-w-7xl px-4 py-6 text-sm text-muted flex flex-col sm:flex-row gap-2 justify-between">
+-            <span>OmniCompare MVP · marketplace listings are demo data; delivery estimates are seeded, not live.</span>
++            <span>OmniCompare · live prices from Google Shopping India; confirm on the store before buying.</span>
+             <span>Compare smarter</span>
+           </div>
+         </footer>
+diff --git a/frontend/src/app/page.tsx b/frontend/src/app/page.tsx
+index aa732e0..0ab00b9 100644
+--- a/frontend/src/app/page.tsx
++++ b/frontend/src/app/page.tsx
+@@ -35,7 +35,7 @@ export default function Home() {
+       <div className="mt-14 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-muted">
+         {MARKETS.map(([n, c]) => <span key={n} className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c }} />{n}</span>)}
+       </div>
+-      <p className="mt-6 text-center text-xs text-muted">Marketplace listings shown in this MVP are demo data. Delivery estimates are seeded, not live.</p>
++      <p className="mt-6 text-center text-xs text-muted">Live prices from Google Shopping (India). Always confirm the final price on the store before buying.</p>
+     </div>
+   );
+ }
+diff --git a/frontend/src/app/product/[id]/ProductDetailView.tsx b/frontend/src/app/product/[id]/ProductDetailView.tsx
+index 6a70a03..87c741d 100644
+--- a/frontend/src/app/product/[id]/ProductDetailView.tsx
++++ b/frontend/src/app/product/[id]/ProductDetailView.tsx
+@@ -106,7 +106,7 @@ export function ProductDetailView({ id }: { id: string }) {
+           <label className="mt-5 flex w-fit items-center gap-2 rounded-full border border-line px-3 py-1.5 text-sm">
+             <MapPin className="h-4 w-4 text-muted" />
+             <input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="Enter pincode" inputMode="numeric" className="w-28 bg-transparent outline-none" aria-label="Enter pincode" />
+-            <DemoLabel />
++            {data.delivery_is_demo && <DemoLabel />}
+           </label>
+ 
+           {attrs.length > 0 && (
+diff --git a/frontend/src/app/search/SearchResults.tsx b/frontend/src/app/search/SearchResults.tsx
+index b988616..57402fa 100644
+--- a/frontend/src/app/search/SearchResults.tsx
++++ b/frontend/src/app/search/SearchResults.tsx
+@@ -63,7 +63,8 @@ export function SearchResults() {
+           <p className="mt-1 text-sm text-muted">
+             {data ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
+             {pincode && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
+-            {" · "}<DemoLabel />
++            {data?.delivery_is_demo && <>{" · "}<DemoLabel /></>}
++            {data?.live && <> · Live prices from Google Shopping India</>}
+           </p>
+         </div>
+         <div className="flex items-center gap-2">
+@@ -93,10 +94,16 @@ export function SearchResults() {
+               <p className="mt-1 text-muted">Start the backend (<code>uvicorn app.main:app --reload</code>) and check NEXT_PUBLIC_API_URL. Error: {error}</p>
+             </div>
+           )}
++          {!error && data?.error && (
++            <div className="mb-4 rounded-card border border-line p-4 text-sm">
++              <p className="font-semibold">Live prices are temporarily unavailable.</p>
++              <p className="mt-1 text-muted">{data.error}</p>
++            </div>
++          )}
+           {!error && data && groups.length === 0 && (
+             <div className="rounded-card border border-line p-10 text-center">
+               <p className="font-semibold">No products match “{q}”.</p>
+-              <p className="mt-1 text-sm text-muted">Try a broader term like “hoodie”, “mascara” or “sneakers”, or clear the filters.</p>
++              <p className="mt-1 text-sm text-muted">Try a different spelling or a broader term, or clear the filters.</p>
+             </div>
+           )}
+           <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+diff --git a/frontend/src/components/ComparisonTable.tsx b/frontend/src/components/ComparisonTable.tsx
+index 0ab7d8e..259f2c9 100644
+--- a/frontend/src/components/ComparisonTable.tsx
++++ b/frontend/src/components/ComparisonTable.tsx
+@@ -6,6 +6,7 @@ import { Rating } from "./Rating";
+ import { Badge } from "./ui/badge";
+ import { DemoLabel } from "./DemoLabel";
+ import { cn } from "@/lib/utils";
++import { imageSrc } from "@/lib/api";
+ 
+ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false }: {
+   listings: Listing[]; cheapestId?: number | null; fastestId?: number | null; dense?: boolean;
+@@ -17,7 +18,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
+           <tr>
+             <th className="px-4 py-3 font-medium">Marketplace</th>
+             <th className="px-4 py-3 font-medium">Price</th>
+-            <th className="px-4 py-3 font-medium">Delivery <DemoLabel text="demo" /></th>
++            <th className="px-4 py-3 font-medium">Delivery {listings.some((l) => l.delivery?.isDemo) && <DemoLabel text="demo" />}</th>
+             <th className="px-4 py-3 font-medium">Rating</th>
+             {!dense && <th className="px-4 py-3 font-medium">Seller</th>}
+             {!dense && <th className="px-4 py-3 font-medium">Availability</th>}
+@@ -60,7 +61,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
+                   </td>
+                 )}
+                 <td className="px-4 py-3 text-right">
+-                  <a href={l.product_url} target="_blank" rel="noopener noreferrer"
++                  <a href={imageSrc(l.product_url)} target="_blank" rel="noopener noreferrer"
+                     className="inline-flex h-8 items-center gap-1 whitespace-nowrap rounded-full border border-line px-3 text-xs font-medium hover:bg-surface">
+                     View on {l.marketplace.name} <ExternalLink className="h-3 w-3" />
+                   </a>
+diff --git a/frontend/src/lib/types.ts b/frontend/src/lib/types.ts
+index 3e680fc..3a648c0 100644
+--- a/frontend/src/lib/types.ts
++++ b/frontend/src/lib/types.ts
+@@ -74,6 +74,8 @@ export type ProductDetail = ProductGroup & {
+   images: string[];
+   delivery_is_demo: boolean;
+   pincode: string | null;
++  live?: boolean;
++  error?: string | null;
+ };
+ 
+ export type SearchResponse = {
+@@ -84,6 +86,8 @@ export type SearchResponse = {
+   total_groups: number;
+   total_listings: number;
+   delivery_is_demo: boolean;
++  live?: boolean;
++  error?: string | null;
+ };
+ 
+ export type SortOption = { value: string; label: string };
+-- 
+2.43.0
+
