@@ -9,6 +9,7 @@ import { FilterSidebar } from "@/components/FilterSidebar";
 import { SortControl } from "@/components/SortControl";
 import { DemoLabel } from "@/components/DemoLabel";
 import { Button } from "@/components/ui/button";
+import { SearchingAnimation } from "@/components/SearchingAnimation";
 
 export function SearchResults() {
   const params = useSearchParams();
@@ -19,7 +20,7 @@ export function SearchResults() {
 
   const [data, setData] = useState<SearchResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(q));
   const [filters, setFilters] = useState<SearchFilters>({});
   const [marketplaces, setMarketplaces] = useState<Marketplace[]>([]);
   const [showFilters, setShowFilters] = useState(false);
@@ -61,7 +62,7 @@ export function SearchResults() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Results for “{q}”</h1>
           <p className="mt-1 text-sm text-muted">
-            {data ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
+            {data && !loading ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
             {pincode && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
             {data?.delivery_is_demo && <>{" · "}<DemoLabel /></>}
             {data?.live && <> · Live prices from Google Shopping India</>}
@@ -94,23 +95,25 @@ export function SearchResults() {
               <p className="mt-1 text-muted">Start the backend (<code>uvicorn app.main:app --reload</code>) and check NEXT_PUBLIC_API_URL. Error: {error}</p>
             </div>
           )}
-          {!error && data?.error && (
+          {!loading && !error && data?.error && (
             <div className="mb-4 rounded-card border border-line p-4 text-sm">
               <p className="font-semibold">Live prices are temporarily unavailable.</p>
               <p className="mt-1 text-muted">{data.error}</p>
             </div>
           )}
-          {!error && data && groups.length === 0 && (
+          {!loading && !error && data && groups.length === 0 && (
             <div className="rounded-card border border-line p-10 text-center">
               <p className="font-semibold">No products match “{q}”.</p>
               <p className="mt-1 text-sm text-muted">Try a different spelling or a broader term, or clear the filters.</p>
             </div>
           )}
-          <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>
+          {loading ? (
+            <SearchingAnimation query={q} />
+          ) : (
             <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-3">
               {groups.map((g) => <ProductGroupCard key={g.id} g={g} pincode={pincode} />)}
             </div>
-          </div>
+          )}
         </section>
       </div>
     </div>

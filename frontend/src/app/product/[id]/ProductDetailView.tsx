@@ -11,6 +11,7 @@ import { ProductGroupCard, subtitleOf } from "@/components/ProductGroupCard";
 import { SortControl } from "@/components/SortControl";
 import { MarketplaceBadge } from "@/components/MarketplaceBadge";
 import { DemoLabel } from "@/components/DemoLabel";
+import { SearchingAnimation } from "@/components/SearchingAnimation";
 import { Tabs } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { usePincode } from "@/lib/usePincode";
@@ -51,7 +52,7 @@ export function ProductDetailView({ id }: { id: string }) {
   const listings = useMemo(() => data ? sortListings(data.listings.filter((l) => !mkt || l.marketplace.slug === mkt), sort) : [], [data, sort, mkt]);
 
   if (error) return <div className="mx-auto max-w-7xl px-4 py-10 text-sm"><p className="font-semibold">Couldn’t load this product.</p><p className="text-muted">{error}</p></div>;
-  if (!data) return <div className="mx-auto max-w-7xl px-4 py-10 text-muted">Loading…</div>;
+  if (!data) return <div className="mx-auto max-w-7xl px-4 py-6"><SearchingAnimation query="this product" title="Comparing every store for" skeletons={0} /></div>;
 
   const attrs = Object.entries(data.attributes).filter(([k]) => !HIDE.has(k));
   const exactCount = data.listing_count;
