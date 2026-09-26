@@ -32,6 +32,7 @@ export type Listing = {
   delivery: DeliveryInfo;
   product_attributes: Record<string, string>;
   product_url: string;
+  is_live?: boolean;
   relevance?: number;
 };
 

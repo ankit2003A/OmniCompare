@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
   title: "OmniCompare — Find the same product. Compare every seller.",
-  description: "AI-powered product matching across Amazon, Flipkart, Croma, Myntra, Nykaa and more.",
+  description: "AI-powered product matching across Amazon, Flipkart, Croma, Myntra, Nykaa and more — live prices for India.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

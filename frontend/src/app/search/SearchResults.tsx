@@ -36,6 +36,11 @@ export function SearchResults() {
       .then((r) => {
         if (cancelled) return;
         setData(r); setError(null);
+        if (r.live && !filters.marketplaces) {
+          const seen = new Map<string, Marketplace>();
+          r.groups.forEach((g) => g.marketplaces.forEach((m) => seen.set(m.slug, { ...m, id: 0, base_url: "" })));
+          setMarketplaces([...seen.values()].sort((a, b) => a.name.localeCompare(b.name)));
+        }
         if (!filters.brands) {
           const b = new Set<string>();
           r.groups.forEach((g) => g.listings.forEach((l) => l.brand && b.add(l.brand)));
@@ -62,10 +67,10 @@ export function SearchResults() {
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Results for “{q}”</h1>
           <p className="mt-1 text-sm text-muted">
-            {data && !loading ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
-            {pincode && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
+            {data && !loading ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} stores` : "Searching…"}
+            {pincode && !data?.live && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
             {data?.delivery_is_demo && <>{" · "}<DemoLabel /></>}
-            {data?.live && <> · Live prices{data.location && data.location !== "India" ? <> for <span className="font-medium text-ink">{data.location}</span></> : " (all India — add a pincode for local delivery)"}</>}
+            {data?.live && <> · Live prices{data.location && data.location !== "India" ? <> for <span className="font-medium text-ink">{data.location}</span></> : " for all India (add your pincode for local delivery)"}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -91,8 +96,9 @@ export function SearchResults() {
         <section aria-busy={loading}>
           {error && (
             <div className="rounded-card border border-line p-6 text-sm">
-              <p className="font-semibold">Couldn’t reach the OmniCompare API.</p>
-              <p className="mt-1 text-muted">Start the backend (<code>uvicorn app.main:app --reload</code>) and check NEXT_PUBLIC_API_URL. Error: {error}</p>
+              <p className="font-semibold">Our price service is taking a moment to respond.</p>
+              <p className="mt-1 text-muted">It may be waking up after a quiet period. Please try again in a few seconds.</p>
+              <button onClick={() => setFilters({ ...filters })} className="mt-3 rounded-full bg-ink px-4 py-2 text-sm font-medium text-white hover:bg-black">Try again</button>
             </div>
           )}
           {!loading && !error && data?.error && (

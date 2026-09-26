@@ -11,8 +11,39 @@ import { imageSrc } from "@/lib/api";
 export function ComparisonTable({ listings, cheapestId, fastestId, dense = false }: {
   listings: Listing[]; cheapestId?: number | null; fastestId?: number | null; dense?: boolean;
 }) {
+  const live = listings.some((l) => l.is_live);
   return (
-    <div className="overflow-x-auto rounded-card border border-line">
+    <>
+    <ul className="space-y-3 sm:hidden">
+      {listings.map((l) => {
+        const cheap = l.id === cheapestId, fast = l.id === fastestId;
+        return (
+          <li key={l.id} className={cn("rounded-card border p-4", cheap ? "border-cheap/40 bg-cheap-bg/40" : "border-line")}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <MarketplaceBadge m={l.marketplace} />
+                <p className="mt-1 line-clamp-2 text-xs text-muted">{l.title}</p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className={cn("text-lg font-bold", cheap && "text-cheap")}>{inr(l.price)}</p>
+                {l.mrp > l.price && <p className="text-xs text-muted"><span className="line-through">{inr(l.mrp)}</span> · {Math.round(l.discount_percentage)}% off</p>}
+              </div>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {cheap && <Badge tone="cheap">Cheapest</Badge>}
+              {fast && <Badge tone="fast">Fastest</Badge>}
+              <span className={cn(fast ? "font-medium text-fast" : "text-muted")}>{l.delivery.deliveryText}</span>
+              {l.rating > 0 && <Rating value={l.rating} count={l.review_count} />}
+            </div>
+            <a href={imageSrc(l.product_url)} target="_blank" rel="noopener noreferrer"
+              className="mt-3 flex h-10 w-full items-center justify-center gap-1.5 rounded-full bg-ink text-sm font-medium text-white active:bg-black">
+              View on {l.marketplace.name} <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </li>
+        );
+      })}
+    </ul>
+    <div className="hidden overflow-x-auto rounded-card border border-line sm:block">
       <table className="w-full min-w-[720px] text-sm">
         <thead className="bg-surface text-left text-xs text-muted">
           <tr>
@@ -21,7 +52,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
             <th className="px-4 py-3 font-medium">Delivery {listings.some((l) => l.delivery?.isDemo) && <DemoLabel text="demo" />}</th>
             <th className="px-4 py-3 font-medium">Rating</th>
             {!dense && <th className="px-4 py-3 font-medium">Seller</th>}
-            {!dense && <th className="px-4 py-3 font-medium">Availability</th>}
+            {!dense && !live && <th className="px-4 py-3 font-medium">Availability</th>}
             <th className="px-4 py-3" />
           </tr>
         </thead>
@@ -51,9 +82,9 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
                     {fast && <Badge tone="fast">Fastest</Badge>}
                   </div>
                 </td>
-                <td className="px-4 py-3"><Rating value={l.rating} count={l.review_count} /></td>
+                <td className="px-4 py-3">{l.rating > 0 ? <Rating value={l.rating} count={l.review_count} /> : <span className="text-xs text-muted">No reviews</span>}</td>
                 {!dense && <td className="px-4 py-3 text-muted">{l.seller_name}</td>}
-                {!dense && (
+                {!dense && !live && (
                   <td className="px-4 py-3">
                     <span className={cn("text-xs font-medium", l.availability === "in_stock" ? "text-cheap" : l.availability === "low_stock" ? "text-fast" : "text-muted")}>
                       {l.availability === "in_stock" ? "In stock" : l.availability === "low_stock" ? "Few left" : "Out of stock"}
@@ -72,5 +103,6 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
         </tbody>
       </table>
     </div>
+    </>
   );
 }

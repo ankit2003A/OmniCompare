@@ -49,7 +49,7 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
         <Search className="h-5 w-5 shrink-0 text-muted" />
         <input
           value={q} onChange={(e) => { setQ(e.target.value); setOpen(true); }} onFocus={() => setOpen(true)}
-          placeholder="Search for a product..." aria-label="Search for a product"
+          placeholder="Search any product…" aria-label="Search for a product"
           className={cn("min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted", compact ? "text-sm" : "text-base")}
         />
         <label className="flex items-center gap-1 border-l border-line pl-2 text-sm text-muted sm:pl-3">
@@ -59,7 +59,7 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
             aria-label="Enter pincode" className="w-16 bg-transparent text-ink outline-none placeholder:text-muted sm:w-[5.5rem]"
           />
         </label>
-        <button type="submit" className={cn("shrink-0 rounded-full bg-ink px-5 font-medium text-white hover:bg-black", compact ? "h-8 text-sm" : "h-11 text-base")}>
+        <button type="submit" className={cn("shrink-0 rounded-full bg-ink px-4 font-medium sm:px-5 text-white hover:bg-black", compact ? "h-8 text-sm" : "h-11 text-base")}>
           Search
         </button>
       </div>

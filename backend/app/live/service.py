@@ -125,7 +125,7 @@ def _raw_from_result(r: dict) -> RawListing | None:
     pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
     days, dtext = _delivery(r.get("delivery"))
     return RawListing(
-        listing_id=f"g-{pid}-{slug}"[:100], marketplace=slug, seller_name=source, title=title,
+        listing_id=f"g-{pid}-{slug}-{hashlib.md5(title.lower().encode()).hexdigest()[:8]}"[:100], marketplace=slug, seller_name=source, title=title,
         description=r.get("snippet") or "", brand=None, category="", price=price,
         mrp=max(price, _num(r.get("extracted_old_price"), price)), currency="INR",
         image_url=r.get("thumbnail") or "", image_hash="", rating=_num(r.get("rating")),

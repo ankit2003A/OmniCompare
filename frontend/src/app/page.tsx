@@ -2,17 +2,17 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { SearchBar } from "@/components/SearchBar";
 
-const EXAMPLES = ["black oversized hoodie", "Maybelline Sky High mascara", "iPhone 17 case", "white sneakers", "Levi's 511", "Airdopes 141"];
-const MARKETS = [["Amazon", "#FF9900"], ["Flipkart", "#2874F0"], ["Meesho", "#9F2089"], ["Myntra", "#FF3F6C"], ["Nykaa", "#FC2779"], ["AJIO", "#2C4152"]];
+const EXAMPLES = ["iPhone 16", "Redmi Note 15", "Samsung Galaxy S25", "boAt Airdopes", "Nike running shoes", "Maybelline mascara"];
+const MARKETS = [["Amazon", "#FF9900"], ["Flipkart", "#2874F0"], ["Croma", "#00A99D"], ["Reliance Digital", "#E42529"], ["Myntra", "#FF3F6C"], ["Nykaa", "#FC2779"], ["AJIO", "#2C4152"], ["JioMart", "#0078AD"]];
 
 export default function Home() {
   return (
     <div className="mx-auto max-w-4xl px-4 pb-16 pt-14 sm:pt-24">
       <div className="text-center">
-        <h1 className="text-4xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+        <h1 className="text-[2.1rem] font-bold leading-[1.08] tracking-tight sm:text-6xl">
           Find the same product.<br />Compare every seller.<br />Buy smarter.
         </h1>
-        <p className="mx-auto mt-5 max-w-xl text-lg text-muted">AI-powered product matching across marketplaces.</p>
+        <p className="mx-auto mt-5 max-w-xl text-lg text-muted">Live prices from India’s biggest stores — the same product matched across all of them.</p>
       </div>
 
       <div className="mx-auto mt-10 max-w-2xl">
@@ -27,9 +27,9 @@ export default function Home() {
       </div>
 
       <div className="mt-16 grid gap-6 sm:grid-cols-3">
-        <Step n="1" title="One search, six marketplaces" body="Listings from Amazon, Flipkart, Meesho, Myntra, Nykaa and AJIO, pulled into one place." />
-        <Step n="2" title="Same product, grouped" body="Titles, attributes and imagery are compared so 'Sky High Mascara 7.2ml' and 'Sky High Washable Mascara' land in one group." />
-        <Step n="3" title="Cheapest and fastest, side by side" body="Price, delivery time, seller and rating for every listing. Sort by what matters to you." />
+        <Step n="1" title="One search, every store" body="Live prices from Amazon, Flipkart, Croma, Reliance Digital, Myntra, Nykaa and many more — in one place." />
+        <Step n="2" title="Exact same product" body="Brand, model, storage, colour and condition are matched, so a 128 GB phone is never compared with a 256 GB one." />
+        <Step n="3" title="Cheapest and fastest" body="See who sells it cheapest and who delivers fastest to your pincode, then buy directly on the store." />
       </div>
 
       <div className="mt-14 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-muted">

@@ -82,3 +82,11 @@ def test_ranking_demotes_variants_refurbs_and_outliers():
     assert order[0].startswith("Apple iPhone 16 (128 GB)")
     assert order[-1].startswith("USA AT&T")
     assert "unusually_low_price" in groups[3]["flags"] and "refurbished" in groups[2]["flags"]
+
+
+def test_same_google_id_different_title_never_overwrites_price():
+    a = service._raw_from_result({"title": "Apple iPhone 16 (128 GB) - Ultramarine", "source": "Amazon.in",
+                                  "price": "₹69,900", "extracted_price": 69900, "product_id": "p1"})
+    b = service._raw_from_result({"title": "REDMI Note 15 5G (Mist Purple, 128 GB)", "source": "Amazon.in",
+                                  "price": "₹16,999", "extracted_price": 16999, "product_id": "p1"})
+    assert a.listing_id != b.listing_id

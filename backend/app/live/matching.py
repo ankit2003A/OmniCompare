@@ -213,8 +213,9 @@ def live_cluster(raws: list[RawListing], query: str = "") -> tuple[list[ProductG
         kept.update(m.listing_id for m in members)
         lead = min(members, key=lambda m: m.product_attributes.get("_position", 99))
         idn = ids[lead.listing_id]
-        attrs = {k: v for k, v in {"brand": idn.brand, "storage": idn.storage, "ram": idn.ram, "colour": idn.colour,
-                                   "condition": idn.condition if idn.condition != "new" else None,
+        pretty = lambda v: re.sub(r"(\d)(gb|tb)$", lambda m: f"{m.group(1)} {m.group(2).upper()}", v) if v else v
+        attrs = {k: v for k, v in {"brand": idn.brand, "storage": pretty(idn.storage), "ram": pretty(idn.ram) and f"{pretty(idn.ram)} RAM",
+                                   "colour": idn.colour, "condition": idn.condition if idn.condition != "new" else None,
                                    "quantity": idn.quantity}.items() if v}
         groups.append(ProductGroup(
             key=len(groups), listings=members, attributes=attrs, canonical_title=_clean(lead.title),
