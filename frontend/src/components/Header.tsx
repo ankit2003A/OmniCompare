@@ -1,11 +1,14 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import { SearchBar } from "./SearchBar";
+import { warmUpBackend } from "@/lib/api";
 
 export function Header() {
   const pathname = usePathname();
   const onHome = pathname === "/";
+  useEffect(() => { warmUpBackend(); }, []);   // wake the backend as soon as anyone opens the site
   return (
     <header className="sticky top-0 z-30 border-b border-line bg-white/90 backdrop-blur">
       <div className="mx-auto flex max-w-7xl flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">

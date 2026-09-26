@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "./api";
+import { pincodeFromCoords } from "./api";
 
 const SESSION = "omnicompare.geoThisVisit";
 
@@ -22,7 +22,7 @@ export function useLocate(setPincode: (p: string) => void, onFound?: (p: string)
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         try {
-          const r = await api.locate(pos.coords.latitude, pos.coords.longitude);
+          const r = await pincodeFromCoords(pos.coords.latitude, pos.coords.longitude);
           if (r.pincode) { setPincode(r.pincode); cb.current?.(r.pincode); setStatus("idle"); }
           else setStatus("failed");
         } catch { setStatus("failed"); }

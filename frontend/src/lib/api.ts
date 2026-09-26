@@ -16,6 +16,24 @@ async function get<T>(path: string, params?: Record<string, string | number | bo
   return res.json();
 }
 
+/** Coordinates → pincode straight from the browser (BigDataCloud's free client-side API),
+ *  so location works instantly even while the backend is waking up. */
+export async function pincodeFromCoords(lat: number, lon: number): Promise<{ pincode: string | null; label: string | null }> {
+  try {
+    const u = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`;
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
+    const d = await fetch(u, { signal: ctrl.signal }).then((r) => r.json()); clearTimeout(t);
+    const pin = String(d.postcode ?? "").replace(/\D/g, "").slice(0, 6);
+    if (d.countryCode === "IN" && pin.length === 6) return { pincode: pin, label: [d.city || d.locality, d.principalSubdivision].filter(Boolean).join(", ") };
+  } catch {}
+  try { return await api.locate(lat, lon); } catch { return { pincode: null, label: null }; }   // backend fallback
+}
+
+/** Fire-and-forget request that wakes the (free-tier) backend while the shopper is still typing. */
+export function warmUpBackend() {
+  try { fetch(`${API_URL}/health`, { cache: "no-store", mode: "cors" }).catch(() => {}); } catch {}
+}
+
 export const api = {
   search: (q: string, opts: { pincode?: string; sort?: string; filters?: SearchFilters } = {}) =>
     get<SearchResponse>("/api/search", {
