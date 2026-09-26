@@ -168,3 +168,25 @@ def test_galaxy_s25_page_is_clean():
     top = max(cards, key=lambda c: c["relevance"])
     edge = next(c for c in cards if "Edge" in c["canonical_title"])
     assert "Icyblue" in top["canonical_title"] and edge["relevance"] < top["relevance"]
+
+
+def test_cards_without_delivery_are_hidden(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv("SERPAPI_API_KEY", "t")
+    from app.live import serpapi, location
+    monkeypatch.setattr(location, "resolve", lambda p: {"location": "India", "label": "India", "pincode": None})
+    monkeypatch.setattr(service.locations, "resolve", lambda p: {"location": "India", "label": "India", "pincode": None})
+    monkeypatch.setattr(serpapi, "amazon_search", lambda q: [])
+    monkeypatch.setattr(serpapi, "shopping_search", lambda q, loc="India": [
+        {"position": 1, "title": "Puma Men Essentials Hoodie Black", "source": "Myntra", "price": "₹1,499",
+         "extracted_price": 1499, "delivery": "Delivery by 2 Oct"},
+        {"position": 2, "title": "Nike Club Fleece Hoodie Black", "source": "Nike", "price": "₹3,695",
+         "extracted_price": 3695, "delivery": "Free delivery"}])
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db import Base
+    eng = create_engine(f"sqlite:///{tmp_path}/t.db"); Base.metadata.create_all(eng)
+    db = sessionmaker(bind=eng)()
+    out = service.live_search(db, "black hoodie", None, "relevance", {}, lambda l, f: True)
+    titles = [g["canonical_title"] for g in out["groups"]]
+    assert titles == ["Puma Men Essentials Hoodie Black"]

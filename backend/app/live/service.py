@@ -331,6 +331,9 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
     _score_groups(groups, query)
     # Keep the page focused: hide spare parts / refurbished / suspicious listings, drop weak matches, cap at 12.
     groups = [g for g in groups if not g["flags"]]
+    with_delivery = [g for g in groups if g.get("fastest")]
+    if with_delivery:                      # owner's choice: only show products whose delivery time is known
+        groups = with_delivery
     strong = [g for g in groups if g["relevance"] >= 0.5]
     if len(strong) >= 3:
         groups = strong

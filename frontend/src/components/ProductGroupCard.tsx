@@ -55,17 +55,19 @@ export function ProductGroupCard({ g, pincode }: { g: ProductGroup; pincode?: st
           {multi ? `Compared across ${stores} stores` : "Found at 1 store so far — open to compare all stores"}
         </p>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className={g.fastest ? "grid grid-cols-2 gap-2" : "grid grid-cols-1"}>
           <div className="rounded-xl bg-cheap-bg p-2.5 sm:p-3">
             <p className="text-[11px] font-medium text-cheap">{multi ? "Cheapest" : "Price"}</p>
             <p className="text-base font-bold leading-tight text-ink sm:text-lg">{g.cheapest ? inr(g.cheapest.price) : "—"}</p>
             {g.cheapest && <p className="text-xs text-cheap">{g.cheapest.marketplace.name}</p>}
           </div>
-          <div className="rounded-xl bg-fast-bg p-2.5 sm:p-3">
-            <p className="text-[11px] font-medium text-fast">{multi ? "Fastest" : "Delivery"}</p>
-            <p className="line-clamp-2 text-sm font-bold leading-tight text-ink sm:text-base">{g.fastest ? g.fastest.deliveryText : "See store"}</p>
-            {g.fastest && <p className="text-xs text-fast">{g.fastest.marketplace.name}</p>}
-          </div>
+          {g.fastest && (
+            <div className="rounded-xl bg-fast-bg p-2.5 sm:p-3">
+              <p className="text-[11px] font-medium text-fast">{multi ? "Fastest" : "Delivery"}</p>
+              <p className="line-clamp-2 text-sm font-bold leading-tight text-ink sm:text-base">{g.fastest.deliveryText}</p>
+              <p className="text-xs text-fast">{g.fastest.marketplace.name}</p>
+            </div>
+          )}
         </div>
 
         {!single && (

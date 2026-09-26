@@ -32,7 +32,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               {cheap && <Badge tone="cheap">Cheapest</Badge>}
               {fast && <Badge tone="fast">Fastest</Badge>}
-              <span className={cn(fast ? "font-medium text-fast" : "text-muted")}>{l.delivery.deliveryText}</span>
+              {l.delivery.deliveryDays < 90 && <span className={cn(fast ? "font-medium text-fast" : "text-muted")}>{l.delivery.deliveryText}</span>}
               {l.rating > 0 && <Rating value={l.rating} count={l.review_count} />}
             </div>
             <a href={imageSrc(l.product_url)} target="_blank" rel="noopener noreferrer"
@@ -77,7 +77,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
                 </td>
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className={cn("font-medium", fast && "text-fast")}>{l.delivery.deliveryText}</span>
+                    <span className={cn("font-medium", fast && "text-fast")}>{l.delivery.deliveryDays < 90 ? l.delivery.deliveryText : "—"}</span>
                     <span className="text-xs text-muted">{l.delivery.deliveryDays === 0 || l.delivery.deliveryDays >= 90 || /\d|tomorrow|today/i.test(l.delivery.deliveryText) ? "" : `~${l.delivery.deliveryDays} day${l.delivery.deliveryDays > 1 ? "s" : ""}`}</span>
                     {fast && <Badge tone="fast">Fastest</Badge>}
                   </div>

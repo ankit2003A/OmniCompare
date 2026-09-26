@@ -100,17 +100,19 @@ export function ProductDetailView({ id }: { id: string }) {
           <h1 className="mt-2 text-2xl font-bold leading-tight tracking-tight sm:text-3xl">{data.canonical_title}</h1>
           <p className="mt-1 text-sm text-muted">{subtitleOf(data.attributes)}</p>
 
-          <div className="mt-5 grid grid-cols-2 gap-3 sm:max-w-md">
+          <div className={cn("mt-5 grid gap-3 sm:max-w-md", data.fastest ? "grid-cols-2" : "grid-cols-1")}>
             <div className="rounded-xl bg-cheap-bg p-4">
               <p className="text-xs font-medium text-cheap">{(data.store_count ?? data.marketplaces.length) > 1 ? "Cheapest" : "Price"}</p>
               <p className="text-2xl font-bold">{data.cheapest ? inr(data.cheapest.price) : "—"}</p>
               {data.cheapest && <p className="text-sm text-cheap">{data.cheapest.marketplace.name}</p>}
             </div>
-            <div className="rounded-xl bg-fast-bg p-4">
-              <p className="text-xs font-medium text-fast">{(data.store_count ?? data.marketplaces.length) > 1 ? "Fastest" : "Delivery"}</p>
-              <p className="text-2xl font-bold">{data.fastest?.deliveryText ?? "See store"}</p>
-              {data.fastest && <p className="text-sm text-fast">{data.fastest.marketplace.name}</p>}
-            </div>
+            {data.fastest && (
+              <div className="rounded-xl bg-fast-bg p-4">
+                <p className="text-xs font-medium text-fast">{(data.store_count ?? data.marketplaces.length) > 1 ? "Fastest" : "Delivery"}</p>
+                <p className="text-2xl font-bold">{data.fastest.deliveryText}</p>
+                <p className="text-sm text-fast">{data.fastest.marketplace.name}</p>
+              </div>
+            )}
           </div>
           {data.price_max > data.price_min && <p className="mt-2 text-sm text-muted">Prices range from {inr(data.price_min)} to {inr(data.price_max)} across {data.store_count ?? data.listing_count} stores.</p>}
 
@@ -169,7 +171,7 @@ export function ProductDetailView({ id }: { id: string }) {
                   <li key={l.id} className="flex flex-wrap items-center justify-between gap-2 py-2.5">
                     <div className="flex items-center gap-2"><MarketplaceBadge m={l.marketplace} /><span className="text-muted">Seller: {l.seller_name}</span></div>
                     <div className="flex items-center gap-3 text-xs text-muted">
-                      <span>MRP {inr(l.mrp)}</span><span>{Math.round(l.discount_percentage)}% off</span><span>{l.delivery.deliveryText}</span>
+                      <span>MRP {inr(l.mrp)}</span><span>{Math.round(l.discount_percentage)}% off</span>{l.delivery.deliveryDays < 90 && <span>{l.delivery.deliveryText}</span>}
                     </div>
                   </li>
                 ))}
