@@ -34,22 +34,33 @@ KNOWN_STORES = [  # (match substring, slug, display name, colour)
     ("myntra", "myntra", "Myntra", "#FF3F6C"), ("ajio", "ajio", "AJIO", "#2C4152"),
     ("nykaa", "nykaa", "Nykaa", "#FC2779"), ("meesho", "meesho", "Meesho", "#9F2089"),
     ("croma", "croma", "Croma", "#00A99D"), ("reliance digital", "reliance-digital", "Reliance Digital", "#E42529"),
-    ("jiomart", "jiomart", "JioMart", "#0078AD"), ("tata cliq", "tatacliq", "Tata CLiQ", "#DA1C5C"),
+    ("jiomart", "jiomart", "JioMart", "#0078AD"), ("tata cliq", "tatacliq", "Tata CLiQ", "#DA1C5C"), ("tatacliq", "tatacliq", "Tata CLiQ", "#DA1C5C"),
     ("vijay sales", "vijay-sales", "Vijay Sales", "#E31E24"), ("snapdeal", "snapdeal", "Snapdeal", "#E40046"),
     ("bigbasket", "bigbasket", "BigBasket", "#84C225"), ("blinkit", "blinkit", "Blinkit", "#F8CB46"),
     ("zepto", "zepto", "Zepto", "#5E17EB"), ("swiggy", "swiggy-instamart", "Swiggy Instamart", "#FC8019"),
     ("pepperfry", "pepperfry", "Pepperfry", "#F16521"), ("decathlon", "decathlon", "Decathlon", "#0082C3"),
+    ("purplle", "purplle", "Purplle", "#7B2CBF"), ("tira", "tira", "Tira", "#111111"), ("1mg", "1mg", "Tata 1mg", "#FF6F61"),
+    ("pharmeasy", "pharmeasy", "PharmEasy", "#10847E"), ("netmeds", "netmeds", "Netmeds", "#20B2AA"),
+    ("lenskart", "lenskart", "Lenskart", "#000042"), ("firstcry", "firstcry", "FirstCry", "#F37021"),
+    ("bewakoof", "bewakoof", "Bewakoof", "#FDD835"), ("cashify", "cashify", "Cashify", "#2E7D32"),
+    ("sangeetha", "sangeetha", "Sangeetha Mobiles", "#D32F2F"), ("poorvika", "poorvika", "Poorvika", "#E53935"),
 ]
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 def _store(source: str) -> tuple[str, str, str]:
-    s = (source or "Store").lower().strip()
+    # "Purplle.com - Beauty Online" → store "Purplle.com"; the rest is the seller on that store
+    s = re.split(r"\s+[-–|]\s+", (source or "Store").strip())[0].lower().strip()
     for sub, slug, name, colour in KNOWN_STORES:
         if s == sub or s.startswith(sub + ".") or s.startswith(sub + " ") or s.startswith("www." + sub):
             return slug, name, colour
-    slug = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:40] or "store"
-    return slug, source.strip()[:90] or "Store", "#555555"
+    base = re.sub(r"^(www|buy|shop|store)\.", "", s)
+    base = re.sub(r"\.(com|in|co\.in|shop|store|net|org)$", "", base)
+    slug = re.sub(r"[^a-z0-9]+", "-", base).strip("-")[:40] or "store"
+    name = re.split(r"\s+[-–|]\s+", source.strip())[0]
+    name = re.sub(r"^(www|buy|shop|store)\.", "", name, flags=re.I)
+    name = re.sub(r"\.(com|in|co\.in)$", "", name, flags=re.I)
+    return slug, (name[:1].upper() + name[1:])[:90] or "Store", "#555555"
 
 
 def _marketplace(db: Session, source: str, link: str = "") -> Marketplace:
@@ -125,6 +136,8 @@ def _raw_from_result(r: dict) -> RawListing | None:
     if round(price, 2) != round(price) or ("₹" not in str(r.get("price", "₹")) and "rs" not in str(r.get("price", "")).lower()):
         return None        # converted foreign-currency price → overseas store, not useful for India
     source = (r.get("source") or "").strip() or "Multiple stores"
+    if source == "Multiple stores" and not (_page_token(r) or r.get("product_link")):
+        return None        # nothing to compare and no way to reach a store
     slug, _, _ = _store(source)
     pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
     days, dtext = _delivery(r.get("delivery"))
@@ -282,6 +295,10 @@ def _score_groups(groups: list[dict], query: str) -> None:
                  if m in {"pro", "plus", "max", "mini", "ultra", "lite", "fe", "air", "neo", "e"}
                  or any(m != qm and m.startswith(qm) and qm.isdigit() for qm in q_ident.model)]
         score -= 0.2 * len(extra)
+        if q_ident.brand:                                   # "maybelline mascara" → other brands rank lower
+            g_brand = idn.brand or (idn.tokens[0] if idn.tokens else None)
+            if g_brand != q_ident.brand:
+                score -= 0.6
         if idn.condition == "refurbished" and not ({"refurbished", "renewed", "used"} & q_words):
             score -= 0.25
             flags.append("refurbished")

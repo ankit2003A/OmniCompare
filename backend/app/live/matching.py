@@ -37,7 +37,13 @@ BRANDS = {"apple", "samsung", "xiaomi", "oneplus", "realme", "vivo", "oppo", "iq
           "prestige", "puma", "nike", "adidas", "reebok", "levi's", "levis", "maybelline", "lakme", "loreal",
           "canon", "nikon", "fujifilm", "gopro", "dji", "microsoft", "nintendo", "amazon", "whirlpool", "godrej",
           "voltas", "daikin", "haier", "panasonic", "ifb", "bosch", "dyson", "titan", "fastrack", "casio", "fossil",
-          "boult", "cmf", "redmi", "poco"}
+          "boult", "cmf", "redmi", "poco", "lakme", "nykaa", "sugar", "mac", "mamaearth", "himalaya", "nivea",
+          "dove", "garnier", "cetaphil", "minimalist", "plum", "biotique", "swiss", "colorbar", "revlon", "benefit",
+          "clinique", "estee", "bobbi", "mars", "wrangler", "pepe", "jockey", "bata", "campus", "skechers", "asics",
+          "woodland", "crocs", "wildcraft", "skybags", "safari", "vip", "milton", "cello", "borosil", "pigeon",
+          "hawkins", "tata", "amul", "aashirvaad", "fortune", "saffola", "nestle", "cadbury", "britannia", "parle",
+          "colgate", "dettol", "lifebuoy", "surf", "ariel", "tide", "pampers", "huggies", "mamypoko", "lg", "kent",
+          "aquaguard", "atomberg", "crompton", "orient", "usha", "symphony", "kenstar", "morphy", "inalsa", "agaro"}
 COLOURS = ["desert titanium", "natural titanium", "black titanium", "white titanium", "blue titanium", "space black",
            "space grey", "space gray", "midnight", "starlight", "ultramarine", "teal", "mist purple", "jet black",
            "black", "white", "blue", "navy", "green", "red", "pink", "purple", "lavender", "violet", "yellow", "gold",
@@ -97,8 +103,11 @@ def identity(title: str, query: str = "") -> Identity:
     colours = COLOUR_RE.findall(t)
     colour = colours[-1].replace("gray", "grey") if colours else None
 
-    words = t.split()
-    brand = next((w for w in words if w in BRANDS), None)
+    # Identity words come from the title's first segment: sellers stuff other brands'
+    # names after "|" ("Blue Heaven Mascara | maybelline mascara hypercurl …").
+    head = _norm(title.split("|")[0]) or t
+    words = head.split()
+    brand = next((w for w in words[:3] if w in BRANDS), None)          # brands lead real titles
     if brand is None:
         brand = next((BRAND_ALIASES[w] for w in words if w in BRAND_ALIASES), None)
     brand = {"redmi": "xiaomi", "poco": "xiaomi", "moto": "motorola", "levis": "levi's"}.get(brand, brand)
@@ -118,9 +127,13 @@ def identity(title: str, query: str = "") -> Identity:
         elif len(w) > 1:
             family.add(w)
     q = set(_norm(query).split())
+    if brand is None and words and len(words[0]) > 1 and not words[0][0].isdigit():
+        brand_guess = words[0]
+    else:
+        brand_guess = brand
     accessory = bool((family | model) & ACCESSORY_WORDS - q) and not (ACCESSORY_WORDS & q)
     return Identity(brand, frozenset(model), frozenset(family), storage, ram, colour, condition, accessory,
-                    quantity, words)
+                    quantity, [brand_guess] + words)
 
 
 def _dice(a: frozenset, b: frozenset) -> float:

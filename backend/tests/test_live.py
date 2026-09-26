@@ -105,3 +105,22 @@ def test_missing_source_is_named_multiple_stores():
     r = service._raw_from_result({"title": "Apple iPhone 16 - 128 GB - Ultramarine", "price": "₹67,000",
                                   "extracted_price": 67000, "immersive_product_page_token": "t"})
     assert r.seller_name == "Multiple stores" and r.product_attributes["_page_token"] == "t"
+
+
+def test_store_names_normalised():
+    assert service._store("Purplle.com - Beauty Online")[:2] == ("purplle", "Purplle")
+    assert service._store("Purplle.com - Purplle Shopping")[0] == "purplle"
+    assert service._store("JioMart Grocery")[0] == "jiomart"
+    assert service._store("buy.budli.in")[1] == "Budli"
+
+
+def test_keyword_stuffed_titles_do_not_steal_the_brand():
+    groups = [{"canonical_title": t, "price_min": p, "marketplaces": [{}]} for t, p in [
+        ("Blue Heaven Lengthening Waterproof Mascara Black 8ml | maybelline hypercurl mascara", 381),
+        ("Maybelline New York Hyper Curl Very Black Waterproof Mascara 9.3 ml", 374)]]
+    service._score_groups(groups, "maybelline mascara")
+    assert groups[1]["relevance"] > groups[0]["relevance"]
+
+
+def test_dead_results_without_store_or_link_are_dropped():
+    assert service._raw_from_result({"title": "Maybelline Colossal Mascara", "price": "₹290", "extracted_price": 290}) is None
