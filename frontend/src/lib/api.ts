@@ -33,6 +33,7 @@ export const api = {
   suggestions: (q: string) => get<{ history: string[]; products: string[] }>("/api/search/suggestions", { q }),
   product: (id: string | number, pincode?: string, sort?: string) =>
     get<ProductDetail>(`/api/products/${id}`, { pincode, sort }),
+  locate: (lat: number, lon: number) => get<{ pincode: string | null; label: string | null }>("/api/locate", { lat, lon }),
   marketplaces: () => get<Marketplace[]>("/api/marketplaces"),
   sortOptions: () => get<SortOption[]>("/api/sort-options"),
 };

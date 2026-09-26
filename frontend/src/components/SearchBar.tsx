@@ -1,9 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Search, MapPin, Clock, Tag } from "lucide-react";
+import { Search, MapPin, Clock, Tag, LocateFixed, LoaderCircle } from "lucide-react";
 import { api } from "@/lib/api";
 import { usePincode } from "@/lib/usePincode";
+import { useLocate } from "@/lib/useLocate";
 import { cn } from "@/lib/utils";
 
 export function SearchBar({ compact = false }: { compact?: boolean }) {
@@ -14,6 +15,13 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [sugg, setSugg] = useState<{ history: string[]; products: string[] }>({ history: [], products: [] });
   const box = useRef<HTMLFormElement>(null);
+  const { status: geo, detect } = useLocate(pincode, setPincode, (pin) => {
+    // Already looking at results? Refresh them for the detected location.
+    if (typeof window !== "undefined" && window.location.pathname === "/search") {
+      const sp = new URLSearchParams(window.location.search);
+      if (sp.get("pincode") !== pin) { sp.set("pincode", pin); router.replace(`/search?${sp.toString()}`); }
+    }
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -58,6 +66,12 @@ export function SearchBar({ compact = false }: { compact?: boolean }) {
             value={pincode} onChange={(e) => setPincode(e.target.value)} inputMode="numeric" placeholder="Pincode"
             aria-label="Enter pincode" className="w-16 bg-transparent text-ink outline-none placeholder:text-muted sm:w-[5.5rem]"
           />
+          <button type="button" onClick={detect} disabled={geo === "locating"}
+            title={geo === "denied" ? "Location permission is blocked — allow it in your browser, or type a pincode" : "Use my current location"}
+            aria-label="Use my current location"
+            className={cn("rounded-full p-1 transition-colors hover:bg-surface hover:text-ink", geo === "denied" && "text-fast")}>
+            {geo === "locating" ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <LocateFixed className="h-4 w-4" />}
+          </button>
         </label>
         <button type="submit" className={cn("shrink-0 rounded-full bg-ink px-4 font-medium sm:px-5 text-white hover:bg-black", compact ? "h-8 text-sm" : "h-11 text-base")}>
           Search

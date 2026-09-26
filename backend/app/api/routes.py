@@ -48,6 +48,13 @@ def usage():
     return {"live_mode": get_settings().live_mode, **serpapi.account()}
 
 
+@router.get("/locate")
+def locate(lat: float = Query(..., ge=-90, le=90), lon: float = Query(..., ge=-180, le=180)):
+    """Browser geolocation → pincode (free; no SerpApi usage)."""
+    from app.live.location import reverse
+    return reverse(lat, lon)
+
+
 @router.get("/debug/last-search")
 def debug_last_search():
     """Summary of the last raw SerpApi search payload (no API call, no cost)."""
