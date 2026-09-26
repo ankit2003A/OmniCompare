@@ -17,7 +17,7 @@ from urllib.parse import urlparse, parse_qs
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.adapters.base import RawListing
-from app.live.matching import live_cluster, identity
+from app.live.matching import live_cluster, identity, VARIANT_WORDS
 from app.live import location as locations
 from app.matching.engine import product_text
 from app.models import Listing, Marketplace, Product, ProductMatch, LiveQuery
@@ -27,40 +27,74 @@ from app.services.sorting import sort_listings, sort_groups
 from app.live import serpapi
 
 CACHE_TTL = timedelta(hours=6)
+MAX_RESULTS = 12
 _LOCK = threading.Lock()   # one ingest at a time (the UI can fire duplicate searches)
 
-KNOWN_STORES = [  # (match substring, slug, display name, colour)
-    ("amazon", "amazon", "Amazon", "#FF9900"), ("flipkart", "flipkart", "Flipkart", "#2874F0"),
-    ("myntra", "myntra", "Myntra", "#FF3F6C"), ("ajio", "ajio", "AJIO", "#2C4152"),
-    ("nykaa", "nykaa", "Nykaa", "#FC2779"), ("meesho", "meesho", "Meesho", "#9F2089"),
-    ("croma", "croma", "Croma", "#00A99D"), ("reliance digital", "reliance-digital", "Reliance Digital", "#E42529"),
-    ("jiomart", "jiomart", "JioMart", "#0078AD"), ("tata cliq", "tatacliq", "Tata CLiQ", "#DA1C5C"), ("tatacliq", "tatacliq", "Tata CLiQ", "#DA1C5C"),
-    ("vijay sales", "vijay-sales", "Vijay Sales", "#E31E24"), ("snapdeal", "snapdeal", "Snapdeal", "#E40046"),
-    ("bigbasket", "bigbasket", "BigBasket", "#84C225"), ("blinkit", "blinkit", "Blinkit", "#F8CB46"),
-    ("zepto", "zepto", "Zepto", "#5E17EB"), ("swiggy", "swiggy-instamart", "Swiggy Instamart", "#FC8019"),
-    ("pepperfry", "pepperfry", "Pepperfry", "#F16521"), ("decathlon", "decathlon", "Decathlon", "#0082C3"),
-    ("purplle", "purplle", "Purplle", "#7B2CBF"), ("tira", "tira", "Tira", "#111111"), ("1mg", "1mg", "Tata 1mg", "#FF6F61"),
-    ("pharmeasy", "pharmeasy", "PharmEasy", "#10847E"), ("netmeds", "netmeds", "Netmeds", "#20B2AA"),
-    ("lenskart", "lenskart", "Lenskart", "#000042"), ("firstcry", "firstcry", "FirstCry", "#F37021"),
-    ("bewakoof", "bewakoof", "Bewakoof", "#FDD835"), ("cashify", "cashify", "Cashify", "#2E7D32"),
-    ("sangeetha", "sangeetha", "Sangeetha Mobiles", "#D32F2F"), ("poorvika", "poorvika", "Poorvika", "#E53935"),
+# Only these stores are shown (owner's list). (aliases, slug, display name, colour)
+MAIN_STORES = [
+    (("amazon",), "amazon", "Amazon", "#FF9900"),
+    (("flipkart",), "flipkart", "Flipkart", "#2874F0"),
+    (("meesho",), "meesho", "Meesho", "#9F2089"),
+    (("myntra",), "myntra", "Myntra", "#FF3F6C"),
+    (("nykaa", "nykaa fashion", "nykaaman"), "nykaa", "Nykaa", "#FC2779"),
+    (("ajio", "ajio luxe"), "ajio", "AJIO", "#2C4152"),
+    (("tata cliq", "tatacliq", "tata cliq luxury", "tata cliq fashion"), "tatacliq", "Tata CLiQ", "#DA1C5C"),
+    (("nike", "nike india"), "nike", "Nike", "#111111"),
+    (("foot locker", "footlocker", "foot locker india"), "footlocker", "Foot Locker", "#E4002B"),
+    (("apple", "apple store", "apple india"), "apple", "Apple Store", "#111111"),
+    (("zepto",), "zepto", "Zepto", "#5E17EB"),
+    (("croma",), "croma", "Croma", "#00A99D"),
+    (("reliance digital", "reliancedigital"), "reliance-digital", "Reliance Digital", "#E42529"),
+    (("vijay sales", "vijaysales"), "vijay-sales", "Vijay Sales", "#E31E24"),
+    (("firstcry",), "firstcry", "FirstCry", "#F37021"),
+    (("decathlon", "decathlon india"), "decathlon", "Decathlon", "#0082C3"),
+    (("shoppers stop", "shoppersstop"), "shoppers-stop", "Shoppers Stop", "#1A1A1A"),
+    (("lifestyle", "lifestyle stores", "lifestylestores"), "lifestyle", "Lifestyle", "#E91E63"),
+    (("westside",), "westside", "Westside", "#8B6F47"),
+    (("h&m", "h & m", "hm", "h&m india"), "hm", "H&M", "#E50010"),
+    (("zara", "zara india"), "zara", "Zara", "#111111"),
+    (("adidas", "adidas india"), "adidas", "Adidas", "#111111"),
+    (("puma", "puma india"), "puma", "Puma", "#BA2025"),
+    (("samsung", "samsung shop", "samsung india", "samsung store"), "samsung", "Samsung", "#1428A0"),
+    (("oneplus", "oneplus india", "oneplus store"), "oneplus", "OnePlus", "#EB0028"),
+    (("reliance trends", "trends"), "reliance-trends", "Reliance Trends", "#D71920"),
+    (("jiomart", "jiomart grocery", "jio mart"), "jiomart", "JioMart", "#0078AD"),
+    (("blinkit",), "blinkit", "Blinkit", "#F8CB46"),
+    (("swiggy instamart", "instamart", "swiggy"), "swiggy-instamart", "Swiggy Instamart", "#FC8019"),
+    (("bigbasket", "big basket", "bb now"), "bigbasket", "BigBasket", "#84C225"),
 ]
+_ALIAS = {a: (slug, name, colour) for aliases, slug, name, colour in MAIN_STORES for a in aliases}
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
+def _store_key(source: str) -> str:
+    s = re.split(r"\s+[-–|]\s+", (source or "").strip())[0].lower().strip()
+    s = re.sub(r"^(www|buy|shop|store|m)\.", "", s)
+    return re.sub(r"\.(com|in|co\.in|shop|store)$", "", s).strip()
+
+
+def main_store(source: str) -> tuple[str, str, str] | None:
+    """The owner's store list only: exact store name, or the store name followed by a word
+    ("JioMart Grocery", "NIKE India"). Resellers like "iCrescent Apple Store" don't match."""
+    key = _store_key(source)
+    if key in _ALIAS:
+        return _ALIAS[key]
+    first = key.split(" ")[0] if key else ""
+    two = " ".join(key.split(" ")[:2])
+    for cand in (two, first):
+        if cand in _ALIAS and cand not in ("trends", "swiggy", "apple", "samsung", "lifestyle"):
+            return _ALIAS[cand]
+    if key.startswith(("apple ", "samsung ")) and key.endswith(("store", "shop", "india", "online store")):
+        return _ALIAS[first]
+    return None
+
+
 def _store(source: str) -> tuple[str, str, str]:
-    # "Purplle.com - Beauty Online" → store "Purplle.com"; the rest is the seller on that store
-    s = re.split(r"\s+[-–|]\s+", (source or "Store").strip())[0].lower().strip()
-    for sub, slug, name, colour in KNOWN_STORES:
-        if s == sub or s.startswith(sub + ".") or s.startswith(sub + " ") or s.startswith("www." + sub):
-            return slug, name, colour
-    base = re.sub(r"^(www|buy|shop|store)\.", "", s)
-    base = re.sub(r"\.(com|in|co\.in|shop|store|net|org)$", "", base)
-    slug = re.sub(r"[^a-z0-9]+", "-", base).strip("-")[:40] or "store"
-    name = re.split(r"\s+[-–|]\s+", source.strip())[0]
-    name = re.sub(r"^(www|buy|shop|store)\.", "", name, flags=re.I)
-    name = re.sub(r"\.(com|in|co\.in)$", "", name, flags=re.I)
-    return slug, (name[:1].upper() + name[1:])[:90] or "Store", "#555555"
+    hit = main_store(source)
+    if hit:
+        return hit
+    key = _store_key(source) or "store"
+    return re.sub(r"[^a-z0-9]+", "-", key).strip("-")[:40] or "store", (source or "Store").strip()[:90], "#555555"
 
 
 def _marketplace(db: Session, source: str, link: str = "") -> Marketplace:
@@ -157,9 +191,9 @@ def _raw_from_result(r: dict) -> RawListing | None:
         return None
     if round(price, 2) != round(price) or ("₹" not in str(r.get("price", "₹")) and "rs" not in str(r.get("price", "")).lower()):
         return None        # converted foreign-currency price → overseas store, not useful for India
-    source = (r.get("source") or "").strip() or "Multiple stores"
-    if source == "Multiple stores" and not (_page_token(r) or r.get("product_link")):
-        return None        # nothing to compare and no way to reach a store
+    source = (r.get("source") or "").strip()
+    if not source or main_store(source) is None:
+        return None        # not one of the main stores → not shown
     slug, _, _ = _store(source)
     pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
     days, dtext = _delivery(r.get("delivery"))
@@ -295,6 +329,21 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
         g["_rank"] = rank
         groups.append(g)
     _score_groups(groups, query)
+    # Keep the page focused: hide spare parts / refurbished / suspicious listings, drop weak matches, cap at 12.
+    groups = [g for g in groups if not g["flags"]]
+    strong = [g for g in groups if g["relevance"] >= 0.5]
+    if len(strong) >= 3:
+        groups = strong
+    groups = sorted(groups, key=lambda g: (-g["relevance"], -len(g["marketplaces"]), g["_rank"]))
+    seen_titles: set[str] = set()
+    unique = []
+    for g in groups:                       # two cards that look identical to a shopper → keep the better one
+        key = re.sub(r"[^a-z0-9]+", " ", g["canonical_title"].lower()).strip()
+        if key in seen_titles:
+            continue
+        seen_titles.add(key)
+        unique.append(g)
+    groups = unique[:MAX_RESULTS]
     if sort == "relevance":
         groups.sort(key=lambda g: (-g["relevance"], g["_rank"]))
     else:
@@ -324,14 +373,14 @@ def _score_groups(groups: list[dict], query: str) -> None:
         score = hit / total if total else 0.5
         flags = []
         extra = [m for m in idn.model - q_ident.model
-                 if m in {"pro", "plus", "max", "mini", "ultra", "lite", "fe", "air", "neo", "e"}
+                 if m in VARIANT_WORDS or m == "e"
                  or any(m != qm and m.startswith(qm) and qm.isdigit() for qm in q_ident.model)]
         score -= 0.2 * len(extra)
         if q_ident.brand:                                   # "maybelline mascara" → other brands rank lower
             g_brand = idn.brand or (idn.tokens[0] if idn.tokens else None)
             if g_brand != q_ident.brand:
                 score -= 0.6
-        if idn.condition == "refurbished" and not ({"refurbished", "renewed", "used"} & q_words):
+        if idn.condition == "refurbished" and not ({"refurbished", "renewed", "used", "second"} & q_words):
             score -= 0.25
             flags.append("refurbished")
         if idn.accessory:
@@ -382,6 +431,9 @@ def _enrich(db: Session, product: Product) -> str | None:
     for s in res.get("stores", []) or []:
         link, name = s.get("link") or "", s.get("name") or "Store"
         price = _num(s.get("extracted_price"))
+        if main_store(name) is None:
+            notes["skipped"].append(f"{name}: not a main store")
+            continue
         if not link or not price or round(price, 2) != round(price):
             notes["skipped"].append(f"{name}: no link/price or foreign")
             continue                                   # no link, or converted foreign price

@@ -23,6 +23,7 @@ export function SearchResults() {
   const [loading, setLoading] = useState(Boolean(q));
   const [filters, setFilters] = useState<SearchFilters>({});
   const [marketplaces, setMarketplaces] = useState<Marketplace[]>([]);
+  const [resultStores, setResultStores] = useState<Marketplace[]>([]);
   const [showFilters, setShowFilters] = useState(false);
   const [brands, setBrands] = useState<string[]>([]);
 
@@ -39,7 +40,7 @@ export function SearchResults() {
         if (r.live && !filters.marketplaces) {
           const seen = new Map<string, Marketplace>();
           r.groups.forEach((g) => g.marketplaces.forEach((m) => seen.set(m.slug, { ...m, id: 0, base_url: "" })));
-          setMarketplaces([...seen.values()].sort((a, b) => a.name.localeCompare(b.name)));
+          setResultStores([...seen.values()].sort((a, b) => a.name.localeCompare(b.name)));
         }
         if (!filters.brands) {
           const b = new Set<string>();
@@ -82,13 +83,13 @@ export function SearchResults() {
       {sortLabel && <p className="mt-3 rounded-lg bg-surface px-3 py-2 text-sm text-muted">Sorted by {sortLabel}. Cards still show both the cheapest and the fastest option for each product.</p>}
 
       <div className="mt-6 grid gap-8 lg:grid-cols-[240px_1fr]">
-        <FilterSidebar className="hidden lg:block" filters={filters} onChange={setFilters} marketplaces={marketplaces} brands={brands} />
+        <FilterSidebar className="hidden lg:block" filters={filters} onChange={setFilters} marketplaces={data?.live ? resultStores : marketplaces} brands={brands} />
 
         {showFilters && (
           <div className="fixed inset-0 z-40 bg-black/30 lg:hidden" onClick={() => setShowFilters(false)}>
             <div className="absolute inset-y-0 left-0 w-80 max-w-[85vw] overflow-y-auto bg-white p-5" onClick={(e) => e.stopPropagation()}>
               <button className="mb-4 ml-auto flex items-center gap-1 text-sm text-muted" onClick={() => setShowFilters(false)}><X className="h-4 w-4" /> Close</button>
-              <FilterSidebar filters={filters} onChange={setFilters} marketplaces={marketplaces} brands={brands} />
+              <FilterSidebar filters={filters} onChange={setFilters} marketplaces={data?.live ? resultStores : marketplaces} brands={brands} />
             </div>
           </div>
         )}

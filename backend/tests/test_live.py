@@ -101,17 +101,22 @@ def test_vague_listings_need_close_prices():
     assert not any({"id0", "id1"} <= g for g in by)      # 68,459 vs 79,900 with no storage stated: not merged
 
 
-def test_missing_source_is_named_multiple_stores():
-    r = service._raw_from_result({"title": "Apple iPhone 16 - 128 GB - Ultramarine", "price": "₹67,000",
-                                  "extracted_price": 67000, "immersive_product_page_token": "t"})
-    assert r.seller_name == "Multiple stores" and r.product_attributes["_page_token"] == "t"
+def test_results_from_other_stores_are_dropped():
+    assert service._raw_from_result({"title": "Apple iPhone 16", "source": "ubuy.co.in", "price": "₹67,000", "extracted_price": 67000}) is None
+    assert service._raw_from_result({"title": "Apple iPhone 16", "price": "₹67,000", "extracted_price": 67000,
+                                     "immersive_product_page_token": "t"}) is None
 
 
-def test_store_names_normalised():
-    assert service._store("Purplle.com - Beauty Online")[:2] == ("purplle", "Purplle")
-    assert service._store("Purplle.com - Purplle Shopping")[0] == "purplle"
-    assert service._store("JioMart Grocery")[0] == "jiomart"
-    assert service._store("buy.budli.in")[1] == "Budli"
+def test_only_main_stores():
+    ok = {"Amazon.in": "amazon", "Flipkart": "flipkart", "JioMart Grocery": "jiomart", "NIKE India": "nike",
+          "Foot Locker": "footlocker", "Tata CLiQ": "tatacliq", "www.tatacliq.com": "tatacliq", "Apple Store": "apple",
+          "Samsung Shop": "samsung", "H&M": "hm", "Reliance Digital": "reliance-digital", "Reliance Trends": "reliance-trends",
+          "Swiggy Instamart": "swiggy-instamart", "Shoppers Stop": "shoppers-stop", "Myntra": "myntra"}
+    for src, slug in ok.items():
+        assert service.main_store(src) and service.main_store(src)[0] == slug, src
+    for src in ["Purplle.com - Beauty Online", "ubuy.co.in", "dakauf.eu", "Cashify", "iCrescent Apple Authorised Store",
+                "desertcart.in", "Flipshope", "MRV electronics", "The Bank of Electronics", "e2zSTORE", "Superkicks", "farfetch.com"]:
+        assert service.main_store(src) is None, src
 
 
 def test_keyword_stuffed_titles_do_not_steal_the_brand():
@@ -145,3 +150,21 @@ def test_amazon_results_map_to_direct_links():
                                   "delivery": ["FREE delivery Tue, 30 Sep", "Or fastest delivery Tomorrow"]})
     assert r.marketplace == "amazon" and r.product_url == "https://www.amazon.in/dp/B0DPQ" and r.mrp == 29999
     assert r.delivery_days < 90
+
+
+def test_galaxy_s25_page_is_clean():
+    from app.live.matching import live_cluster
+    raws = [_r(0, "Samsung Galaxy S25 5G (Icyblue, 12GB RAM, 128GB Storage)", "amazon", 66500),
+            _r(1, "SAMSUNG Galaxy S25 5G (Icyblue, 128 GB) (12 GB RAM)", "flipkart", 67999),
+            _r(2, "Samsung Galaxy S25 5G", "croma", 66999),                           # vague, price fits 128 GB
+            _r(3, "Samsung Galaxy S25 5G (Navy, 12GB RAM, 256GB Storage)", "amazon", 78999),
+            _r(4, "Samsung Galaxy S25 Edge 5G (Titanium Silver, 12GB, 256GB)", "reliance-digital", 99999)]
+    groups, _, _ = live_cluster(raws, "samsung galaxy s25")
+    by = {frozenset(l.listing_id for l in g.listings) for g in groups}
+    assert frozenset({"id0", "id1", "id2"}) in by                 # vague Croma listing joined the right card
+    cards = [{"canonical_title": g.canonical_title, "price_min": min(l.price for l in g.listings),
+              "marketplaces": [{}] * len(g.listings)} for g in groups]
+    service._score_groups(cards, "samsung galaxy s25")
+    top = max(cards, key=lambda c: c["relevance"])
+    edge = next(c for c in cards if "Edge" in c["canonical_title"])
+    assert "Icyblue" in top["canonical_title"] and edge["relevance"] < top["relevance"]

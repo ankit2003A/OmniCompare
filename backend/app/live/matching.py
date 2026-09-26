@@ -216,7 +216,11 @@ def live_cluster(raws: list[RawListing], query: str = "") -> tuple[list[ProductG
     # exactly one cluster fits (otherwise it would glue different variants together).
     for r in sorted(raws, key=lambda x: (-specificity(x), x.product_attributes.get("_position", 99))):
         options = [c for c in clusters if fits(r, c)]
-        if len(options) == 1 or (options and specificity(r) > 0):
+        if len(options) > 1 and specificity(r) == 0:
+            # A vague title fits several variants: join the one whose price it matches (within 5%).
+            near = [c for c in options if abs(r.price - min(x.price for x in c)) / max(1.0, r.price) <= 0.05]
+            options = near[:1] if len(near) == 1 else []
+        if options:
             options[0].append(r)
         else:
             clusters.append([r])
