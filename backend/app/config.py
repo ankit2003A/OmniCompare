@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     openai_api_key: str = ""
     # Live mode: real Google Shopping (India) data via SerpApi. Empty → demo catalog.
     serpapi_api_key: str = ""
+    # Also query Amazon.in directly (one extra SerpApi search per new query). AMAZON_SEARCH=false to disable.
+    amazon_search: bool = True
 
     @property
     def live_mode(self) -> bool:

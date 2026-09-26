@@ -128,6 +128,28 @@ def _num(v, default=0.0) -> float:
         return default
 
 
+def _raw_from_amazon(r: dict) -> RawListing | None:
+    price = _num(r.get("extracted_price"))
+    title = (r.get("title") or "").strip()
+    link = r.get("link_clean") or r.get("link") or ""
+    if not price or not title or not link or round(price, 2) != round(price):
+        return None
+    delivery = r.get("delivery")
+    if isinstance(delivery, list):
+        delivery = next((d for d in delivery if "deliver" in d.lower() or "get it" in d.lower()), delivery[0] if delivery else "")
+    days, dtext = _delivery(delivery)
+    asin = r.get("asin") or hashlib.md5(title.encode()).hexdigest()[:10]
+    return RawListing(
+        listing_id=f"a-{asin}", marketplace="amazon", seller_name="Amazon.in", title=title, description="",
+        brand=None, category="", price=price, mrp=max(price, _num(r.get("extracted_old_price"), price)), currency="INR",
+        image_url=r.get("thumbnail") or "", image_hash="", rating=_num(r.get("rating")),
+        review_count=int(_num(r.get("reviews"))), delivery_days=days, availability="in_stock",
+        product_attributes={"_live": True, "_delivery_text": dtext, "_direct": True, "_source": "Amazon.in",
+                            "_position": 0.5 + (r.get("position") or 50)},
+        product_url=link,
+    )
+
+
 def _raw_from_result(r: dict) -> RawListing | None:
     price = _num(r.get("extracted_price"))
     title = (r.get("title") or "").strip()
@@ -168,7 +190,7 @@ def _listing_row(db: Session, l: RawListing, product_id: int, source: str, link:
     )
     db.add(row)
     db.flush()
-    row.product_url = link or f"/api/go/{row.id}"
+    row.product_url = link or l.product_url or f"/api/go/{row.id}"
     return row
 
 
@@ -228,12 +250,22 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
         product_ids = cached.product_ids or []
     else:
         try:
-            results = serpapi.shopping_search(query, loc["location"])
+            from concurrent.futures import ThreadPoolExecutor
+            from app.config import get_settings
+            with ThreadPoolExecutor(2) as pool:
+                g_fut = pool.submit(serpapi.shopping_search, query, loc["location"])
+                a_fut = pool.submit(serpapi.amazon_search, query) if get_settings().amazon_search else None
+                results = g_fut.result()
+                try:
+                    amazon = a_fut.result() if a_fut else []
+                except serpapi.LiveDataError:
+                    amazon = []                      # Amazon is a bonus source; never fail the search over it
             _DEBUG["last_search"] = {"query": query, "location": loc["location"], "count": len(results),
                                      "items": [{k: (v if k in ("title", "source", "price", "delivery", "position") else
                                                    (bool(v) if not isinstance(v, (int, float)) else v))
                                                 for k, v in r.items()} for r in results[:40]]}
             raws = [x for x in (_raw_from_result(r) for r in results) if x]
+            raws += [x for x in (_raw_from_amazon(r) for r in amazon[:20]) if x]
             product_ids = _ingest(db, raws, query)
             if cached:
                 cached.product_ids, cached.fetched_at = product_ids, now

@@ -50,6 +50,11 @@ def shopping_search(query: str, location: str = "India") -> list[dict]:
     return data.get("shopping_results", []) or []
 
 
+def amazon_search(query: str) -> list[dict]:
+    data = _get({"engine": "amazon", "amazon_domain": "amazon.in", "k": query})
+    return [r for r in (data.get("organic_results") or []) if not r.get("sponsored")]
+
+
 def product_stores(page_token: str) -> dict:
     data = _get({"engine": "google_immersive_product", "page_token": page_token, "more_stores": "true"})
     return data.get("product_results", {}) or {}

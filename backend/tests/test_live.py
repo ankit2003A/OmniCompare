@@ -124,3 +124,24 @@ def test_keyword_stuffed_titles_do_not_steal_the_brand():
 
 def test_dead_results_without_store_or_link_are_dropped():
     assert service._raw_from_result({"title": "Maybelline Colossal Mascara", "price": "₹290", "extracted_price": 290}) is None
+
+
+def test_spare_parts_are_flagged_but_phones_are_not():
+    from app.live.matching import identity
+    q = "redmi note 14 pro 5g"
+    for t in ["Redmi Note 14 Pro 5G Battery", "TrueView Display for Redmi Note 14 Pro 5G",
+              "Redmi Note 14 Pro Plus 5G - Amoled Display Combo Folder", "for Xiaomi Redmi Note 14 Pro 5G Case with Magnetic",
+              "LCD Screen for Xiaomi Redmi Note 14 Pro 5G"]:
+        assert identity(t, q).accessory, t
+    for t in ["Redmi Note 14 Pro 5G (Titan Black, 8GB RAM, 256GB Storage)",
+              "XIAOMI Redmi Note 14 Pro 5G 6.67 inch AMOLED Display 8GB 256GB"]:
+        assert not identity(t, q).accessory, t
+
+
+def test_amazon_results_map_to_direct_links():
+    r = service._raw_from_amazon({"position": 1, "asin": "B0DPQ", "title": "Redmi Note 14 Pro 5G (Titan Black, 8GB RAM, 256GB Storage)",
+                                  "link_clean": "https://www.amazon.in/dp/B0DPQ", "extracted_price": 24999,
+                                  "extracted_old_price": 29999, "rating": 4.1, "reviews": 812,
+                                  "delivery": ["FREE delivery Tue, 30 Sep", "Or fastest delivery Tomorrow"]})
+    assert r.marketplace == "amazon" and r.product_url == "https://www.amazon.in/dp/B0DPQ" and r.mrp == 29999
+    assert r.delivery_days < 90

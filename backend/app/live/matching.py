@@ -127,11 +127,16 @@ def identity(title: str, query: str = "") -> Identity:
         elif len(w) > 1:
             family.add(w)
     q = set(_norm(query).split())
+    spare = (bool(re.search(r"\b(lcd|digitizer|folder|combo|touch ?screen|back ?panel|back ?glass|housing|flex|"
+                            r"charging ?port|motherboard|battery|replacement|spare|compatible|combo)\b", head))
+             or head.startswith("for ")
+             or (bool(re.search(r"\b(display|screen)\b", head)) and not re.search(r"\d+\s?(gb|tb)\b", t)))
     if brand is None and words and len(words[0]) > 1 and not words[0][0].isdigit():
         brand_guess = words[0]
     else:
         brand_guess = brand
-    accessory = bool((family | model) & ACCESSORY_WORDS - q) and not (ACCESSORY_WORDS & q)
+    accessory = (bool((family | model) & ACCESSORY_WORDS - q) and not (ACCESSORY_WORDS & q)) or \
+                (spare and not ({"battery", "display", "screen", "lcd", "replacement", "spare"} & q))
     return Identity(brand, frozenset(model), frozenset(family), storage, ram, colour, condition, accessory,
                     quantity, [brand_guess] + words)
 
