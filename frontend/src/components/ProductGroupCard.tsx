@@ -17,6 +17,9 @@ export function subtitleOf(attrs: Record<string, string>) {
 export function ProductGroupCard({ g, pincode }: { g: ProductGroup; pincode?: string }) {
   const href = `/product/${g.id}${pincode ? `?pincode=${pincode}` : ""}`;
   const single = g.listing_count === 1;
+  const stores = g.store_count ?? g.marketplaces.length;
+  const multi = stores > 1;
+  const FLAG_TEXT: Record<string, string> = { refurbished: "Refurbished", unusually_low_price: "Price unusually low — check listing", accessory: "Accessory" };
   return (
     <article className="group flex flex-col overflow-hidden rounded-card border border-line bg-white transition-shadow hover:shadow-lg">
       <Link href={href} className="relative block aspect-square overflow-hidden bg-surface">
@@ -38,22 +41,27 @@ export function ProductGroupCard({ g, pincode }: { g: ProductGroup; pincode?: st
         <div>
           <Link href={href} className="line-clamp-2 text-[15px] font-semibold leading-snug hover:underline">{g.canonical_title}</Link>
           <p className="mt-1 text-xs text-muted">{subtitleOf(g.attributes) || g.brand || g.category}</p>
+          {g.flags && g.flags.length > 0 && (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {g.flags.map((f) => <span key={f} className="rounded-full bg-fast-bg px-2 py-0.5 text-[11px] font-medium text-fast">{FLAG_TEXT[f] ?? f}</span>)}
+            </div>
+          )}
         </div>
 
         <p className="flex items-center gap-1.5 text-sm text-muted">
           <Layers className="h-4 w-4" />
-          {single ? "1 listing found" : `${g.listing_count} listings found`}
+          {multi ? `Compared across ${stores} stores` : "Found at 1 store so far — open to compare all stores"}
         </p>
 
         <div className="grid grid-cols-2 gap-2">
           <div className="rounded-xl bg-cheap-bg p-3">
-            <p className="text-[11px] font-medium text-cheap">Cheapest</p>
+            <p className="text-[11px] font-medium text-cheap">{multi ? "Cheapest" : "Price"}</p>
             <p className="text-lg font-bold leading-tight text-ink">{g.cheapest ? inr(g.cheapest.price) : "—"}</p>
             {g.cheapest && <p className="text-xs text-cheap">{g.cheapest.marketplace.name}</p>}
           </div>
           <div className="rounded-xl bg-fast-bg p-3">
-            <p className="text-[11px] font-medium text-fast">Fastest</p>
-            <p className="text-lg font-bold leading-tight text-ink">{g.fastest ? g.fastest.deliveryText : "—"}</p>
+            <p className="text-[11px] font-medium text-fast">{multi ? "Fastest" : "Delivery"}</p>
+            <p className="text-lg font-bold leading-tight text-ink">{g.fastest ? g.fastest.deliveryText : "See store"}</p>
             {g.fastest && <p className="text-xs text-fast">{g.fastest.marketplace.name}</p>}
           </div>
         </div>
@@ -66,7 +74,7 @@ export function ProductGroupCard({ g, pincode }: { g: ProductGroup; pincode?: st
         )}
 
         <Link href={href} className="mt-auto inline-flex h-10 items-center justify-center rounded-full bg-ink text-sm font-medium text-white hover:bg-black">
-          {single ? "View listing" : `Compare ${g.listing_count} listings`}
+          {multi ? `Compare ${stores} stores` : "Compare all stores"}
         </Link>
       </div>
     </article>

@@ -47,7 +47,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
                 <td className="px-4 py-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className={cn("font-medium", fast && "text-fast")}>{l.delivery.deliveryText}</span>
-                    <span className="text-xs text-muted">{l.delivery.deliveryDays === 0 ? "" : `${l.delivery.deliveryDays} day${l.delivery.deliveryDays > 1 ? "s" : ""}`}</span>
+                    <span className="text-xs text-muted">{l.delivery.deliveryDays === 0 || l.delivery.deliveryDays >= 90 || /\d|tomorrow|today/i.test(l.delivery.deliveryText) ? "" : `~${l.delivery.deliveryDays} day${l.delivery.deliveryDays > 1 ? "s" : ""}`}</span>
                     {fast && <Badge tone="fast">Fastest</Badge>}
                   </div>
                 </td>

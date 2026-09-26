@@ -31,9 +31,22 @@ def _get(params: dict) -> dict:
     return data
 
 
-def shopping_search(query: str) -> list[dict]:
+def account() -> dict:
+    """Plan usage from SerpApi's account endpoint (free — does not use a search)."""
+    key = get_settings().serpapi_api_key
+    if not key:
+        return {}
+    try:
+        d = httpx.get("https://serpapi.com/account.json", params={"api_key": key}, timeout=15).json()
+    except Exception as e:
+        return {"error": str(e)}
+    return {k: d.get(k) for k in ("plan_name", "searches_per_month", "this_month_usage", "plan_searches_left",
+                                  "total_searches_left", "last_hour_searches")}
+
+
+def shopping_search(query: str, location: str = "India") -> list[dict]:
     data = _get({"engine": "google_shopping", "q": query, "gl": "in", "hl": "en",
-                 "google_domain": "google.co.in", "location": "India"})
+                 "google_domain": "google.co.in", "location": location or "India"})
     return data.get("shopping_results", []) or []
 
 

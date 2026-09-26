@@ -41,6 +41,13 @@ def search(q: str = Query(..., min_length=1), pincode: str | None = None, sort: 
     return search_products(db, q, pincode, sort, filters)
 
 
+@router.get("/usage")
+def usage():
+    """SerpApi quota (free call). Useful to keep an eye on the monthly search budget."""
+    from app.live import serpapi
+    return {"live_mode": get_settings().live_mode, **serpapi.account()}
+
+
 @router.get("/go/{listing_id}")
 def go_to_store(listing_id: int, db: Session = Depends(get_db)):
     """Redirect to the real store page for a live listing (resolved lazily, then cached)."""

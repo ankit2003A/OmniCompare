@@ -65,6 +65,8 @@ export type ProductGroup = {
   discount_max: number;
   slowest_days: number;
   relevance?: number;
+  store_count?: number;
+  flags?: string[];
 };
 
 export type SimilarProduct = ProductGroup & { similarity: number; reasons: Reason[] };
@@ -86,6 +88,7 @@ export type SearchResponse = {
   total_groups: number;
   total_listings: number;
   delivery_is_demo: boolean;
+  location?: string;
   live?: boolean;
   error?: string | null;
 };

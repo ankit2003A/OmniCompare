@@ -65,7 +65,7 @@ export function SearchResults() {
             {data && !loading ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
             {pincode && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
             {data?.delivery_is_demo && <>{" · "}<DemoLabel /></>}
-            {data?.live && <> · Live prices from Google Shopping India</>}
+            {data?.live && <> · Live prices{data.location && data.location !== "India" ? <> for <span className="font-medium text-ink">{data.location}</span></> : " (all India — add a pincode for local delivery)"}</>}
           </p>
         </div>
         <div className="flex items-center gap-2">

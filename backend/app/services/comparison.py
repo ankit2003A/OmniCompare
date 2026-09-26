@@ -37,18 +37,20 @@ def compare(listings: list[dict]) -> dict:
                 "rating_max": 0, "rating_min": 0, "discount_max": 0, "slowest_days": 0}
     available = [l for l in listings if l["delivery"]["available"]] or listings
     cheapest = min(available, key=lambda l: l["price"])
-    fastest = min(available, key=lambda l: (l["delivery"]["deliveryDays"], l["price"]))
+    known = [l for l in available if l["delivery"]["deliveryDays"] < 90]     # 99 = not stated by store
+    fastest = min(known, key=lambda l: (l["delivery"]["deliveryDays"], l["price"])) if known else None
     return {
         "cheapest": {"listing_id": cheapest["id"], "price": cheapest["price"],
                      "marketplace": cheapest["marketplace"]},
         "fastest": {"listing_id": fastest["id"], "deliveryDays": fastest["delivery"]["deliveryDays"],
-                    "deliveryText": fastest["delivery"]["deliveryText"], "marketplace": fastest["marketplace"]},
+                    "deliveryText": fastest["delivery"]["deliveryText"], "marketplace": fastest["marketplace"]} if fastest else None,
         "price_min": min(l["price"] for l in listings),
         "price_max": max(l["price"] for l in listings),
         "rating_max": max(l["rating"] for l in listings),
         "rating_min": min(l["rating"] for l in listings),
         "discount_max": max(l["discount_percentage"] for l in listings),
-        "slowest_days": max(l["delivery"]["deliveryDays"] for l in listings),
+        "slowest_days": max((l["delivery"]["deliveryDays"] for l in known), default=0),
+        "store_count": len({l["marketplace"]["slug"] for l in listings}),
     }
 
 

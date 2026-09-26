@@ -17,14 +17,14 @@ from urllib.parse import urlparse, parse_qs
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 from app.adapters.base import RawListing
-from app.matching.clustering import cluster
+from app.live.matching import live_cluster, identity
+from app.live import location as locations
 from app.matching.engine import product_text
 from app.models import Listing, Marketplace, Product, ProductMatch, LiveQuery
 from app.services.normalizer import extract_attributes, normalize_title, tokens
 from app.services.comparison import serialize_listing, serialize_group, group_explanation
 from app.services.sorting import sort_listings, sort_groups
 from app.live import serpapi
-from app.live.image_hash import hash_images
 
 CACHE_TTL = timedelta(hours=6)
 _LOCK = threading.Lock()   # one ingest at a time (the UI can fire duplicate searches)
@@ -39,15 +39,14 @@ KNOWN_STORES = [  # (match substring, slug, display name, colour)
     ("bigbasket", "bigbasket", "BigBasket", "#84C225"), ("blinkit", "blinkit", "Blinkit", "#F8CB46"),
     ("zepto", "zepto", "Zepto", "#5E17EB"), ("swiggy", "swiggy-instamart", "Swiggy Instamart", "#FC8019"),
     ("pepperfry", "pepperfry", "Pepperfry", "#F16521"), ("decathlon", "decathlon", "Decathlon", "#0082C3"),
-    ("apple", "apple", "Apple Store", "#111111"), ("samsung", "samsung", "Samsung Shop", "#1428A0"),
 ]
 WEEKDAYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
 
 
 def _store(source: str) -> tuple[str, str, str]:
-    s = (source or "Store").lower()
+    s = (source or "Store").lower().strip()
     for sub, slug, name, colour in KNOWN_STORES:
-        if sub in s:
+        if s == sub or s.startswith(sub + ".") or s.startswith(sub + " ") or s.startswith("www." + sub):
             return slug, name, colour
     slug = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:40] or "store"
     return slug, source.strip()[:90] or "Store", "#555555"
@@ -65,23 +64,39 @@ def _marketplace(db: Session, source: str, link: str = "") -> Marketplace:
     return m
 
 
+UNKNOWN_DAYS = 99     # delivery time not stated by the store → never counted as "fastest"
+MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
+
 def _delivery(text: str | None) -> tuple[int, str]:
-    """Best-effort days from Google's delivery text; unknown → 5 with the store's own text."""
-    t = (text or "").lower()
+    """Days from Google/store delivery text. Unknown → UNKNOWN_DAYS (shown as "See store")."""
+    raw = (text or "").strip()
+    t = raw.lower()
     if not t:
-        return 5, "See store for delivery"
-    if "today" in t:
-        return 0, text
-    if "tomorrow" in t:
-        return 1, text
-    m = re.search(r"(\d+)\s*(?:-\s*\d+\s*)?(?:business\s+)?days?", t)
+        return UNKNOWN_DAYS, "See store for delivery"
+    if re.search(r"\b\d+\s*(min|mins|minutes|hr|hrs|hour|hours)\b", t) or "today" in t or "same day" in t:
+        return 0, raw
+    if "tomorrow" in t or "next day" in t:
+        return 1, raw
+    m = re.search(r"(\d+)\s*(?:-|to)?\s*(\d+)?\s*(?:business\s+|working\s+)?days?", t)
     if m:
-        return int(m.group(1)), text
+        return int(m.group(2) or m.group(1)), raw
+    now = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)      # IST
+    m = re.search(r"\b(\d{1,2})\s*(" + "|".join(MONTHS) + r")", t) or re.search(r"\b(" + "|".join(MONTHS) + r")[a-z]*\s*(\d{1,2})\b", t)
+    if m:
+        a, b = m.groups()
+        day, mon = (int(a), b) if a.isdigit() else (int(b), a)
+        try:
+            target = now.replace(month=MONTHS.index(mon[:3]) + 1, day=day)
+            if target.date() < now.date():
+                target = target.replace(year=now.year + 1)
+            return max(0, (target.date() - now.date()).days), raw
+        except ValueError:
+            pass
     for i, d in enumerate(WEEKDAYS):
         if re.search(rf"\b{d}", t):
-            delta = (i - datetime.now(timezone.utc).weekday()) % 7 or 7
-            return delta, text
-    return 5, text
+            return (i - now.weekday()) % 7 or 7, raw
+    return UNKNOWN_DAYS, raw
 
 
 def _page_token(r: dict) -> str:
@@ -103,6 +118,8 @@ def _raw_from_result(r: dict) -> RawListing | None:
     title = (r.get("title") or "").strip()
     if not price or not title:
         return None
+    if round(price, 2) != round(price) or ("₹" not in str(r.get("price", "₹")) and "rs" not in str(r.get("price", "")).lower()):
+        return None        # converted foreign-currency price → overseas store, not useful for India
     source = r.get("source") or "Store"
     slug, _, _ = _store(source)
     pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
@@ -138,7 +155,7 @@ def _listing_row(db: Session, l: RawListing, product_id: int, source: str, link:
     return row
 
 
-def _ingest(db: Session, raws: list[RawListing]) -> list[int]:
+def _ingest(db: Session, raws: list[RawListing], query: str = "") -> list[int]:
     """Persist results; returns product ids in Google rank order."""
     existing = {l.listing_id: l for l in db.execute(
         select(Listing).where(Listing.listing_id.in_([r.listing_id for r in raws]))).scalars().all()}
@@ -150,9 +167,7 @@ def _ingest(db: Session, raws: list[RawListing]) -> list[int]:
             row.discount_percentage = r.discount_percentage
         else:
             fresh.append(r)
-    for r, h in zip(fresh, hash_images([r.image_url for r in fresh])):
-        r.image_hash = h
-    groups, pairs = cluster(fresh) if fresh else ([], [])
+    groups, pairs, _ = live_cluster(fresh, query) if fresh else ([], [], {})
     rows: dict[str, Listing] = {}
     for g in groups:
         p = Product(canonical_title=g.canonical_title[:300], brand=g.brand, category=g.category,
@@ -171,7 +186,7 @@ def _ingest(db: Session, raws: list[RawListing]) -> list[int]:
     db.commit()
     order: list[int] = []
     for r in raws:
-        row = existing.get(r.listing_id) or rows.get(r.listing_id)
+        row = existing.get(r.listing_id) or rows.get(r.listing_id)     # (duplicates dropped by clustering)
         if row is not None and row.product_id not in order:
             order.append(row.product_id)
     return order
@@ -187,7 +202,8 @@ def live_search(db: Session, query: str, pincode: str | None, sort: str, filters
 
 
 def _live_search(db: Session, query: str, pincode: str | None, sort: str, filters: dict, passes) -> dict:
-    key = _norm_query(query)
+    loc = locations.resolve(pincode)
+    key = f"{_norm_query(query)}|{loc['location']}"[:200]
     cached = db.execute(select(LiveQuery).where(LiveQuery.query == key)).scalar_one_or_none()
     now = datetime.now(timezone.utc)
     error = None
@@ -195,8 +211,8 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
         product_ids = cached.product_ids or []
     else:
         try:
-            raws = [x for x in (_raw_from_result(r) for r in serpapi.shopping_search(query)) if x]
-            product_ids = _ingest(db, raws)
+            raws = [x for x in (_raw_from_result(r) for r in serpapi.shopping_search(query, loc["location"])) if x]
+            product_ids = _ingest(db, raws, query)
             if cached:
                 cached.product_ids, cached.fetched_at = product_ids, now
             else:
@@ -214,19 +230,61 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
             continue
         rows = db.execute(select(Listing).options(joinedload(Listing.marketplace))
                           .where(Listing.product_id == pid)).scalars().all()
-        listings = [l for l in (serialize_listing(x, 1 - rank / 100) for x in rows) if passes(l, filters)]
+        listings = [l for l in (serialize_listing(x) for x in rows) if passes(l, filters)]
         if not listings:
             continue
         ids = [x.id for x in rows]
         matches = db.execute(select(ProductMatch).where(
             ProductMatch.listing_a_id.in_(ids), ProductMatch.listing_b_id.in_(ids),
             ProductMatch.match_type == "EXACT_MATCH")).scalars().all()
-        groups.append(serialize_group(product, sort_listings(listings, sort), group_explanation(matches),
-                                      relevance=1 - rank / 100))
-    groups = sort_groups(groups, sort)
-    return {"query": query, "pincode": pincode, "sort": sort, "groups": groups,
+        g = serialize_group(product, sort_listings(listings, sort), group_explanation(matches))
+        g["_rank"] = rank
+        groups.append(g)
+    _score_groups(groups, query)
+    if sort == "relevance":
+        groups.sort(key=lambda g: (-g["relevance"], g["_rank"]))
+    else:
+        groups = sort_groups(groups, sort)
+    for g in groups:
+        g.pop("_rank", None)
+    return {"query": query, "pincode": loc["pincode"], "location": loc["label"], "sort": sort, "groups": groups,
             "total_groups": len(groups), "total_listings": sum(g["listing_count"] for g in groups),
             "delivery_is_demo": False, "live": True, "error": error}
+
+
+def _score_groups(groups: list[dict], query: str) -> None:
+    """Relevance = how well the product matches the query, minus penalties for extra model
+    variants, refurbished units, accessories and suspiciously cheap listings."""
+    q_ident = identity(query, query)
+    q_tokens = {t for t in (q_ident.model | q_ident.family)}
+    q_words = set(query.lower().split())
+    prices = sorted(g["price_min"] for g in groups if g["price_min"])
+    median = prices[len(prices) // 2] if prices else 0
+    for g in groups:
+        idn = identity(g["canonical_title"], query)
+        tokens = idn.model | idn.family
+        hit = sum(1 for t in q_tokens if t in tokens)
+        if q_ident.storage:
+            hit += 1 if idn.storage == q_ident.storage else 0
+        total = len(q_tokens) + (1 if q_ident.storage else 0)
+        score = hit / total if total else 0.5
+        flags = []
+        extra = [m for m in idn.model - q_ident.model
+                 if m in {"pro", "plus", "max", "mini", "ultra", "lite", "fe", "air", "neo", "e"}
+                 or any(m != qm and m.startswith(qm) and qm.isdigit() for qm in q_ident.model)]
+        score -= 0.2 * len(extra)
+        if idn.condition == "refurbished" and not ({"refurbished", "renewed", "used"} & q_words):
+            score -= 0.25
+            flags.append("refurbished")
+        if idn.accessory:
+            score -= 0.6
+            flags.append("accessory")
+        if median and g["price_min"] < 0.4 * median:
+            score -= 0.9
+            flags.append("unusually_low_price")
+        score += 0.05 * (len(g["marketplaces"]) - 1)
+        g["relevance"] = round(score, 3)
+        g["flags"] = flags
 
 
 def _same_store(a: str, b: str) -> bool:
@@ -252,20 +310,31 @@ def _enrich(db: Session, product: Product) -> str | None:
         res = serpapi.product_stores(token)
     except serpapi.LiveDataError as e:
         return str(e)
-    base = rows[0]
+    base = min(rows, key=lambda r: r.product_attributes.get("_position", 99))
+    base_id = identity(base.title)
+    ref_price = min(r.price for r in rows)
     for s in res.get("stores", []) or []:
         link, name = s.get("link") or "", s.get("name") or "Store"
         price = _num(s.get("extracted_price"))
-        if not link or not price:
-            continue
+        if not link or not price or round(price, 2) != round(price):
+            continue                                   # no link, or converted foreign price
+        if max(price, ref_price) / max(1.0, min(price, ref_price)) > 1.6:
+            continue                                   # not plausibly the same item
+        st_title = s.get("title") or ""
+        if st_title:
+            sid = identity(st_title)
+            if any(getattr(sid, k) and getattr(base_id, k) and getattr(sid, k) != getattr(base_id, k)
+                   for k in ("storage", "ram", "colour", "condition")):
+                continue                               # a different variant of the product
         match = next((r for r in rows if _same_store(r.seller_name, name)), None)
         if match is not None:        # the search listing → give it the direct store link
             match.product_url = link
             match.price = price
             match.product_attributes = {**match.product_attributes, "_direct": True}
             continue
-        details = " · ".join(s.get("details_and_offers") or [])
-        days, dtext = _delivery(details or s.get("shipping"))
+        offers = s.get("details_and_offers") or []
+        dline = next((o for o in offers if "deliver" in o.lower() or "arrives" in o.lower() or "shipping" in o.lower()), "")
+        days, dtext = _delivery(dline or s.get("shipping"))
         raw = RawListing(
             listing_id=f"s-{product.id}-{_store(name)[0]}"[:100], marketplace=_store(name)[0], seller_name=name,
             title=s.get("title") or base.title, description="", brand=None, category="", price=price,

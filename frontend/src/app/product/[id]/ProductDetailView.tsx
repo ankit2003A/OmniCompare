@@ -92,17 +92,17 @@ export function ProductDetailView({ id }: { id: string }) {
 
           <div className="mt-5 grid grid-cols-2 gap-3 sm:max-w-md">
             <div className="rounded-xl bg-cheap-bg p-4">
-              <p className="text-xs font-medium text-cheap">Cheapest</p>
+              <p className="text-xs font-medium text-cheap">{(data.store_count ?? data.marketplaces.length) > 1 ? "Cheapest" : "Price"}</p>
               <p className="text-2xl font-bold">{data.cheapest ? inr(data.cheapest.price) : "—"}</p>
               {data.cheapest && <p className="text-sm text-cheap">{data.cheapest.marketplace.name}</p>}
             </div>
             <div className="rounded-xl bg-fast-bg p-4">
-              <p className="text-xs font-medium text-fast">Fastest</p>
-              <p className="text-2xl font-bold">{data.fastest?.deliveryText ?? "—"}</p>
+              <p className="text-xs font-medium text-fast">{(data.store_count ?? data.marketplaces.length) > 1 ? "Fastest" : "Delivery"}</p>
+              <p className="text-2xl font-bold">{data.fastest?.deliveryText ?? "See store"}</p>
               {data.fastest && <p className="text-sm text-fast">{data.fastest.marketplace.name}</p>}
             </div>
           </div>
-          {data.price_max > data.price_min && <p className="mt-2 text-sm text-muted">Prices range from {inr(data.price_min)} to {inr(data.price_max)} across {data.listing_count} sellers.</p>}
+          {data.price_max > data.price_min && <p className="mt-2 text-sm text-muted">Prices range from {inr(data.price_min)} to {inr(data.price_max)} across {data.store_count ?? data.listing_count} stores.</p>}
 
           <label className="mt-5 flex w-fit items-center gap-2 rounded-full border border-line px-3 py-1.5 text-sm">
             <MapPin className="h-4 w-4 text-muted" />
