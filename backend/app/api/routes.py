@@ -12,6 +12,9 @@ from app.services.comparison import serialize_listing, serialize_group, group_ex
 from app.services.sorting import sort_listings, SORT_OPTIONS
 from app.services.delivery import get_delivery_estimate
 from app.config import get_settings
+from app.services.search import _passes
+from app.live import service as live
+from fastapi.responses import RedirectResponse
 
 router = APIRouter(prefix="/api")
 
@@ -33,7 +36,18 @@ def search(q: str = Query(..., min_length=1), pincode: str | None = None, sort: 
         "min_rating": min_rating, "brands": brands.split(",") if brands else None,
         "in_stock_only": in_stock_only,
     }
+    if get_settings().live_mode:
+        return live.live_search(db, q, pincode, sort, filters, _passes)
     return search_products(db, q, pincode, sort, filters)
+
+
+@router.get("/go/{listing_id}")
+def go_to_store(listing_id: int, db: Session = Depends(get_db)):
+    """Redirect to the real store page for a live listing (resolved lazily, then cached)."""
+    url = live.resolve_store_link(db, listing_id)
+    if not url:
+        raise HTTPException(404, "Store link not available")
+    return RedirectResponse(url, status_code=302)
 
 
 @router.get("/search/suggestions")
@@ -77,13 +91,16 @@ def _group_matches(db: Session, ids: list[int], types=("EXACT_MATCH",)):
 def product_detail(product_id: int, pincode: str | None = None, sort: str = "price_asc",
                    db: Session = Depends(get_db)):
     product = _product_or_404(db, product_id)
+    live_error = live.enrich_product(db, product) if get_settings().live_mode else None
     rows = _group_listings(db, product_id)
     listings = sort_listings([serialize_listing(l) for l in rows], sort)
     explanation = group_explanation(_group_matches(db, [l.id for l in rows]))
     group = serialize_group(product, listings, explanation)
     group["similar_products"] = _similar(db, product, [l.id for l in rows])
     group["images"] = list(dict.fromkeys([l["image_url"] for l in listings]))
-    group["delivery_is_demo"] = True
+    group["delivery_is_demo"] = not get_settings().live_mode
+    group["live"] = get_settings().live_mode
+    group["error"] = live_error
     group["pincode"] = pincode
     return group
 

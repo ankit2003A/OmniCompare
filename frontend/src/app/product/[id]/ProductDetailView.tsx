@@ -106,7 +106,7 @@ export function ProductDetailView({ id }: { id: string }) {
           <label className="mt-5 flex w-fit items-center gap-2 rounded-full border border-line px-3 py-1.5 text-sm">
             <MapPin className="h-4 w-4 text-muted" />
             <input value={pincode} onChange={(e) => setPincode(e.target.value)} placeholder="Enter pincode" inputMode="numeric" className="w-28 bg-transparent outline-none" aria-label="Enter pincode" />
-            <DemoLabel />
+            {data.delivery_is_demo && <DemoLabel />}
           </label>
 
           {attrs.length > 0 && (

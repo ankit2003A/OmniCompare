@@ -6,7 +6,11 @@ from app.services.delivery import build_delivery_info
 
 
 def serialize_listing(l: Listing, relevance: float | None = None) -> dict:
-    delivery = build_delivery_info(l.delivery_days, l.availability != "out_of_stock")
+    pa = l.product_attributes or {}
+    live = bool(pa.get("_live"))
+    delivery = build_delivery_info(l.delivery_days, l.availability != "out_of_stock", is_demo=not live)
+    if live:
+        delivery.deliveryText = pa.get("_delivery_text") or delivery.deliveryText
     d = {
         "id": l.id, "listing_id": l.listing_id, "product_id": l.product_id,
         "marketplace": {"slug": l.marketplace.slug, "name": l.marketplace.name,
@@ -18,7 +22,8 @@ def serialize_listing(l: Listing, relevance: float | None = None) -> dict:
         "review_count": l.review_count, "availability": l.availability,
         "delivery_days": delivery.deliveryDays, "delivery_date": delivery.deliveryDate,
         "delivery_text": delivery.deliveryText, "delivery": delivery.as_dict(),
-        "product_attributes": l.product_attributes, "product_url": l.product_url,
+        "product_attributes": {k: v for k, v in pa.items() if not k.startswith("_")}, "product_url": l.product_url,
+        "is_live": live,
     }
     if relevance is not None:
         d["relevance"] = relevance
@@ -79,7 +84,8 @@ def serialize_group(product: Product, listings: list[dict], explanation: dict | 
     d = {
         "id": product.id, "canonical_title": product.canonical_title, "brand": product.brand,
         "category": product.category, "description": product.description,
-        "canonical_image": product.canonical_image, "attributes": product.attributes,
+        "canonical_image": product.canonical_image,
+        "attributes": {k: v for k, v in (product.attributes or {}).items() if not str(k).startswith("_")},
         "listing_count": len(listings), "marketplaces": marketplaces,
         "listings": listings, "match": explanation or {"confidence": None, "reasons": []},
         **cmp,

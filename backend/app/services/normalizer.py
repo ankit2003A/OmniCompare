@@ -114,7 +114,16 @@ def extract_attributes(listing: RawListing) -> dict:
         if re.search(rf"\b{re.escape(word)}\b", text):
             attrs["gender"] = g
             break
-    qty = re.search(r"\b(\d+(?:\.\d+)?)(ml|g|l|gb)\b", text)
+    text = re.sub(r"\b[2345]g\b", " ", text)              # network generation (4G/5G), not grams
+    ram = re.search(r"\b(\d{1,2})gb\s*ram\b|\bram\s*(\d{1,2})gb\b", text)
+    if ram:
+        attrs["ram"] = f"{ram.group(1) or ram.group(2)} gb"
+    sizes = [(float(n) * (1024 if u == "tb" else 1), f"{n} {u}") for n, u in re.findall(r"\b(\d+(?:\.\d+)?)\s?(gb|tb)\b", text)]
+    if ram:
+        sizes = [s for s in sizes if s[1] != attrs["ram"]]
+    if sizes:
+        attrs["storage"] = max(sizes)[1]
+    qty = re.search(r"\b(\d+(?:\.\d+)?)(ml|g|kg|l)\b", text)
     if qty:
         attrs["quantity"] = f"{qty.group(1)} {qty.group(2)}"
     watt = re.search(r"\b(\d+)w\b", text)
@@ -143,6 +152,9 @@ def extract_attributes(listing: RawListing) -> dict:
             val = re.sub(r"^(uk|size)\s*", "", val)
         elif key == "quantity":
             m = re.match(r"(\d+(?:\.\d+)?)\s*([a-z]+)", val)
+            val = f"{m.group(1)} {m.group(2)}" if m else val
+        elif key in ("storage", "ram"):
+            m = re.match(r"(\d+(?:\.\d+)?)\s*(gb|tb)", val)
             val = f"{m.group(1)} {m.group(2)}" if m else val
         elif key == "shade":
             # shade codes like "MR1 Red Coat" / "Red Coat MR1" → canonical code

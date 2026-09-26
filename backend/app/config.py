@@ -20,6 +20,12 @@ class Settings(BaseSettings):
     embedding_provider: str = "hashing"
     image_similarity_provider: str = "placeholder"
     openai_api_key: str = ""
+    # Live mode: real Google Shopping (India) data via SerpApi. Empty → demo catalog.
+    serpapi_api_key: str = ""
+
+    @property
+    def live_mode(self) -> bool:
+        return bool(self.serpapi_api_key)
 
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
 

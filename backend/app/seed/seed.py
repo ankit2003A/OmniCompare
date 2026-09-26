@@ -4,7 +4,7 @@ Run:  python -m app.seed.seed
 """
 from sqlalchemy.orm import Session
 from app.db import Base, engine, SessionLocal
-from app.models import Marketplace, Product, Listing, ProductMatch, SearchHistory
+from app.models import Marketplace, Product, Listing, ProductMatch, SearchHistory, LiveQuery
 from app.adapters.mock import ADAPTERS
 from app.matching.clustering import cluster
 from app.matching.engine import product_text
@@ -17,7 +17,7 @@ def run_seed(db: Session | None = None, verbose: bool = True) -> dict:
     Base.metadata.create_all(bind=engine if own else db.get_bind())
     db = db or SessionLocal()
     try:
-        for model in (ProductMatch, Listing, Product, Marketplace, SearchHistory):
+        for model in (ProductMatch, Listing, Product, Marketplace, SearchHistory, LiveQuery):
             db.query(model).delete()
         db.commit()
 
@@ -29,7 +29,8 @@ def run_seed(db: Session | None = None, verbose: bool = True) -> dict:
             mkts[slug] = m
         db.flush()
 
-        raw = [l for a in ADAPTERS.values() for l in a.all_listings()]
+        from app.config import get_settings
+        raw = [] if get_settings().live_mode else [l for a in ADAPTERS.values() for l in a.all_listings()]
         groups, pairs = cluster(raw)
 
         listing_rows: dict[str, Listing] = {}

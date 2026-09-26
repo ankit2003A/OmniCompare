@@ -5,7 +5,7 @@ import { Header } from "@/components/Header";
 
 export const metadata: Metadata = {
   title: "OmniCompare — Find the same product. Compare every seller.",
-  description: "AI-powered product matching across Amazon, Flipkart, Meesho, Myntra, Nykaa and AJIO. Demo data.",
+  description: "AI-powered product matching across Amazon, Flipkart, Croma, Myntra, Nykaa and more.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -16,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="flex-1">{children}</main>
         <footer className="border-t border-line mt-16">
           <div className="mx-auto max-w-7xl px-4 py-6 text-sm text-muted flex flex-col sm:flex-row gap-2 justify-between">
-            <span>OmniCompare MVP · marketplace listings are demo data; delivery estimates are seeded, not live.</span>
+            <span>OmniCompare · live prices from Google Shopping India; confirm on the store before buying.</span>
             <span>Compare smarter</span>
           </div>
         </footer>

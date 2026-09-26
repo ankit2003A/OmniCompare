@@ -6,6 +6,7 @@ import { Rating } from "./Rating";
 import { Badge } from "./ui/badge";
 import { DemoLabel } from "./DemoLabel";
 import { cn } from "@/lib/utils";
+import { imageSrc } from "@/lib/api";
 
 export function ComparisonTable({ listings, cheapestId, fastestId, dense = false }: {
   listings: Listing[]; cheapestId?: number | null; fastestId?: number | null; dense?: boolean;
@@ -17,7 +18,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
           <tr>
             <th className="px-4 py-3 font-medium">Marketplace</th>
             <th className="px-4 py-3 font-medium">Price</th>
-            <th className="px-4 py-3 font-medium">Delivery <DemoLabel text="demo" /></th>
+            <th className="px-4 py-3 font-medium">Delivery {listings.some((l) => l.delivery?.isDemo) && <DemoLabel text="demo" />}</th>
             <th className="px-4 py-3 font-medium">Rating</th>
             {!dense && <th className="px-4 py-3 font-medium">Seller</th>}
             {!dense && <th className="px-4 py-3 font-medium">Availability</th>}
@@ -60,7 +61,7 @@ export function ComparisonTable({ listings, cheapestId, fastestId, dense = false
                   </td>
                 )}
                 <td className="px-4 py-3 text-right">
-                  <a href={l.product_url} target="_blank" rel="noopener noreferrer"
+                  <a href={imageSrc(l.product_url)} target="_blank" rel="noopener noreferrer"
                     className="inline-flex h-8 items-center gap-1 whitespace-nowrap rounded-full border border-line px-3 text-xs font-medium hover:bg-surface">
                     View on {l.marketplace.name} <ExternalLink className="h-3 w-3" />
                   </a>

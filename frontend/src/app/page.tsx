@@ -35,7 +35,7 @@ export default function Home() {
       <div className="mt-14 flex flex-wrap items-center justify-center gap-x-6 gap-y-3 text-sm text-muted">
         {MARKETS.map(([n, c]) => <span key={n} className="inline-flex items-center gap-2"><span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c }} />{n}</span>)}
       </div>
-      <p className="mt-6 text-center text-xs text-muted">Marketplace listings shown in this MVP are demo data. Delivery estimates are seeded, not live.</p>
+      <p className="mt-6 text-center text-xs text-muted">Live prices from Google Shopping (India). Always confirm the final price on the store before buying.</p>
     </div>
   );
 }

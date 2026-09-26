@@ -63,7 +63,8 @@ export function SearchResults() {
           <p className="mt-1 text-sm text-muted">
             {data ? `${data.total_groups} product${data.total_groups === 1 ? "" : "s"} · ${data.total_listings} listings across ${new Set(groups.flatMap((g) => g.marketplaces.map((m) => m.slug))).size} marketplaces` : "Searching…"}
             {pincode && <> · delivering to <span className="font-medium text-ink">{pincode}</span></>}
-            {" · "}<DemoLabel />
+            {data?.delivery_is_demo && <>{" · "}<DemoLabel /></>}
+            {data?.live && <> · Live prices from Google Shopping India</>}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -93,10 +94,16 @@ export function SearchResults() {
               <p className="mt-1 text-muted">Start the backend (<code>uvicorn app.main:app --reload</code>) and check NEXT_PUBLIC_API_URL. Error: {error}</p>
             </div>
           )}
+          {!error && data?.error && (
+            <div className="mb-4 rounded-card border border-line p-4 text-sm">
+              <p className="font-semibold">Live prices are temporarily unavailable.</p>
+              <p className="mt-1 text-muted">{data.error}</p>
+            </div>
+          )}
           {!error && data && groups.length === 0 && (
             <div className="rounded-card border border-line p-10 text-center">
               <p className="font-semibold">No products match “{q}”.</p>
-              <p className="mt-1 text-sm text-muted">Try a broader term like “hoodie”, “mascara” or “sneakers”, or clear the filters.</p>
+              <p className="mt-1 text-sm text-muted">Try a different spelling or a broader term, or clear the filters.</p>
             </div>
           )}
           <div className={loading ? "opacity-60 transition-opacity" : "transition-opacity"}>

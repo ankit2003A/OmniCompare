@@ -18,15 +18,15 @@ EXACT_MATCH, SIMILAR, DIFFERENT = "EXACT_MATCH", "SIMILAR", "DIFFERENT"
 # Attribute weights for attribute_similarity; only attributes present on BOTH sides count.
 ATTRIBUTE_WEIGHTS = {"brand": 3.0, "model": 3.0, "category": 2.0, "colour": 2.0, "size": 2.0,
                      "quantity": 2.0, "shade": 2.0, "wattage": 2.0, "capacity": 2.0,
-                     "variant": 1.5, "material": 1.0, "fit": 1.0, "gender": 1.0, "storage": 1.0}
+                     "variant": 1.5, "material": 1.0, "fit": 1.0, "gender": 1.0, "storage": 2.0, "ram": 1.5}
 # Attributes where a mismatch means "not the same purchasable item" (caps at SIMILAR)
-VARIANT_ATTRIBUTES = ("size", "quantity", "shade", "model", "wattage", "capacity", "variant", "colour", "storage")
+VARIANT_ATTRIBUTES = ("size", "quantity", "shade", "model", "wattage", "capacity", "variant", "colour", "storage", "ram")
 # Attributes where a mismatch means "different product entirely" (caps at DIFFERENT)
 IDENTITY_ATTRIBUTES = ("brand", "category")
 LABELS = {"brand": "brand", "category": "product category", "colour": "colour", "size": "size",
           "quantity": "quantity", "shade": "shade", "model": "model", "material": "material",
           "fit": "fit", "gender": "gender", "wattage": "wattage", "capacity": "capacity",
-          "variant": "variant", "storage": "storage"}
+          "variant": "variant", "storage": "storage", "ram": "RAM"}
 
 
 @dataclass

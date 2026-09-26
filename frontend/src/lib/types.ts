@@ -74,6 +74,8 @@ export type ProductDetail = ProductGroup & {
   images: string[];
   delivery_is_demo: boolean;
   pincode: string | null;
+  live?: boolean;
+  error?: string | null;
 };
 
 export type SearchResponse = {
@@ -84,6 +86,8 @@ export type SearchResponse = {
   total_groups: number;
   total_listings: number;
   delivery_is_demo: boolean;
+  live?: boolean;
+  error?: string | null;
 };
 
 export type SortOption = { value: string; label: string };

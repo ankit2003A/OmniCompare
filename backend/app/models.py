@@ -73,6 +73,15 @@ class ProductMatch(Base):
     reasons: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class LiveQuery(Base):
+    """Cache of live search results (query → product ids in rank order) to save API calls."""
+    __tablename__ = "live_queries"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    query: Mapped[str] = mapped_column(String(200), unique=True)
+    product_ids: Mapped[list] = mapped_column(JSON, default=list)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class SearchHistory(Base):
     __tablename__ = "search_history"
     id: Mapped[int] = mapped_column(primary_key=True)
