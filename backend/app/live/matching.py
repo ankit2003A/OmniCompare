@@ -166,7 +166,9 @@ def compare(a: RawListing, b: RawListing, ia: Identity, ib: Identity) -> MatchRe
         ok = False
         reasons.append(Reason("Different product line", "warn"))
     ratio = max(a.price, b.price) / max(1.0, min(a.price, b.price))
-    if ratio > PRICE_RATIO_MAX:
+    vague = not (ia.storage or ib.storage or ia.colour or ib.colour or ia.quantity or ib.quantity)
+    limit = 1.15 if vague else PRICE_RATIO_MAX        # "iPhone 16 Plus" vs "iPhone 16 Plus": could be 128 vs 256 GB
+    if ratio > limit:
         ok = False
         reasons.append(Reason(f"Prices too far apart for the same item ({ratio:.1f}×)", "warn"))
     else:

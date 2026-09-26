@@ -99,9 +99,13 @@ def _delivery(text: str | None) -> tuple[int, str]:
     return UNKNOWN_DAYS, raw
 
 
+_DEBUG: dict[str, object] = {}     # last raw payload summaries (free to inspect via /api/debug)
+
+
 def _page_token(r: dict) -> str:
-    if r.get("immersive_product_page_token"):
-        return r["immersive_product_page_token"]
+    for k in ("immersive_product_page_token", "page_token"):
+        if r.get(k):
+            return r[k]
     api = r.get("serpapi_immersive_product_api") or ""
     return (parse_qs(urlparse(api).query).get("page_token") or [""])[0]
 
@@ -120,7 +124,7 @@ def _raw_from_result(r: dict) -> RawListing | None:
         return None
     if round(price, 2) != round(price) or ("₹" not in str(r.get("price", "₹")) and "rs" not in str(r.get("price", "")).lower()):
         return None        # converted foreign-currency price → overseas store, not useful for India
-    source = r.get("source") or "Store"
+    source = (r.get("source") or "").strip() or "Multiple stores"
     slug, _, _ = _store(source)
     pid = r.get("product_id") or hashlib.md5((title + source).encode()).hexdigest()[:16]
     days, dtext = _delivery(r.get("delivery"))
@@ -211,7 +215,12 @@ def _live_search(db: Session, query: str, pincode: str | None, sort: str, filter
         product_ids = cached.product_ids or []
     else:
         try:
-            raws = [x for x in (_raw_from_result(r) for r in serpapi.shopping_search(query, loc["location"])) if x]
+            results = serpapi.shopping_search(query, loc["location"])
+            _DEBUG["last_search"] = {"query": query, "location": loc["location"], "count": len(results),
+                                     "items": [{k: (v if k in ("title", "source", "price", "delivery", "position") else
+                                                   (bool(v) if not isinstance(v, (int, float)) else v))
+                                                for k, v in r.items()} for r in results[:40]]}
+            raws = [x for x in (_raw_from_result(r) for r in results) if x]
             product_ids = _ingest(db, raws, query)
             if cached:
                 cached.product_ids, cached.fetched_at = product_ids, now
@@ -305,11 +314,19 @@ def _enrich(db: Session, product: Product) -> str | None:
                       .where(Listing.product_id == product.id)).scalars().all()
     token = next((r.product_attributes.get("_page_token") for r in rows if r.product_attributes.get("_page_token")), "")
     if not token:
+        product.attributes = {**(product.attributes or {}), "_enrich_note": "no page token on any listing"}
+        db.commit()
         return None
     try:
         res = serpapi.product_stores(token)
     except serpapi.LiveDataError as e:
+        product.attributes = {**(product.attributes or {}), "_enrich_note": f"error: {e}"}
+        db.commit()
         return str(e)
+    notes = {"stores_returned": len(res.get("stores") or []), "added": 0, "linked": 0, "skipped": []}
+    _DEBUG[f"stores:{product.id}"] = {"keys": sorted(res.keys()), "stores": [
+        {k: s.get(k) for k in ("name", "title", "price", "extracted_price", "details_and_offers")} | {"has_link": bool(s.get("link"))}
+        for s in (res.get("stores") or [])[:20]]}
     base = min(rows, key=lambda r: r.product_attributes.get("_position", 99))
     base_id = identity(base.title)
     ref_price = min(r.price for r in rows)
@@ -317,20 +334,29 @@ def _enrich(db: Session, product: Product) -> str | None:
         link, name = s.get("link") or "", s.get("name") or "Store"
         price = _num(s.get("extracted_price"))
         if not link or not price or round(price, 2) != round(price):
+            notes["skipped"].append(f"{name}: no link/price or foreign")
             continue                                   # no link, or converted foreign price
         if max(price, ref_price) / max(1.0, min(price, ref_price)) > 1.6:
+            notes["skipped"].append(f"{name}: price {price} too far from {ref_price}")
             continue                                   # not plausibly the same item
         st_title = s.get("title") or ""
         if st_title:
             sid = identity(st_title)
             if any(getattr(sid, k) and getattr(base_id, k) and getattr(sid, k) != getattr(base_id, k)
                    for k in ("storage", "ram", "colour", "condition")):
+                notes["skipped"].append(f"{name}: different variant ({st_title[:60]})")
                 continue                               # a different variant of the product
         match = next((r for r in rows if _same_store(r.seller_name, name)), None)
+        placeholder = next((r for r in rows if r.seller_name == "Multiple stores"), None)
+        if match is None and placeholder is not None:
+            # The search result had no merchant name: it becomes this store's offer.
+            placeholder.seller_name, placeholder.marketplace_id = name, _marketplace(db, name, link).id
+            match = placeholder
         if match is not None:        # the search listing → give it the direct store link
             match.product_url = link
             match.price = price
             match.product_attributes = {**match.product_attributes, "_direct": True}
+            notes["linked"] += 1
             continue
         offers = s.get("details_and_offers") or []
         dline = next((o for o in offers if "deliver" in o.lower() or "arrives" in o.lower() or "shipping" in o.lower()), "")
@@ -345,7 +371,9 @@ def _enrich(db: Session, product: Product) -> str | None:
         )
         if db.execute(select(Listing).where(Listing.listing_id == raw.listing_id)).scalar_one_or_none() is None:
             _listing_row(db, raw, product.id, name, link)
-    product.attributes = {**(product.attributes or {}), "_enriched": True}
+            notes["added"] += 1
+    notes["skipped"] = notes["skipped"][:15]
+    product.attributes = {**(product.attributes or {}), "_enriched": True, "_enrich_note": notes}
     db.commit()
     return None
 

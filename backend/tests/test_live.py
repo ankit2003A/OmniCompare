@@ -90,3 +90,18 @@ def test_same_google_id_different_title_never_overwrites_price():
     b = service._raw_from_result({"title": "REDMI Note 15 5G (Mist Purple, 128 GB)", "source": "Amazon.in",
                                   "price": "₹16,999", "extracted_price": 16999, "product_id": "p1"})
     assert a.listing_id != b.listing_id
+
+
+def test_vague_listings_need_close_prices():
+    from app.live.matching import live_cluster
+    raws = [_r(0, "Apple iPhone 16 Plus", "zepto", 68459), _r(1, "Apple iPhone 16 Plus", "reliance-digital", 79900),
+            _r(2, "Apple iPhone 16 Plus", "croma", 69900)]
+    groups, _, _ = live_cluster(raws, "iphone 16 plus")
+    by = {frozenset(l.listing_id for l in g.listings) for g in groups}
+    assert not any({"id0", "id1"} <= g for g in by)      # 68,459 vs 79,900 with no storage stated: not merged
+
+
+def test_missing_source_is_named_multiple_stores():
+    r = service._raw_from_result({"title": "Apple iPhone 16 - 128 GB - Ultramarine", "price": "₹67,000",
+                                  "extracted_price": 67000, "immersive_product_page_token": "t"})
+    assert r.seller_name == "Multiple stores" and r.product_attributes["_page_token"] == "t"

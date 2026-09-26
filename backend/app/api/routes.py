@@ -48,6 +48,25 @@ def usage():
     return {"live_mode": get_settings().live_mode, **serpapi.account()}
 
 
+@router.get("/debug/last-search")
+def debug_last_search():
+    """Summary of the last raw SerpApi search payload (no API call, no cost)."""
+    from app.live.service import _DEBUG
+    return _DEBUG.get("last_search") or {}
+
+
+@router.get("/debug/product/{product_id}")
+def debug_product(product_id: int, db: Session = Depends(get_db)):
+    """Why a product page did / didn't find more stores (no API call, no cost)."""
+    from app.live.service import _DEBUG
+    p = _product_or_404(db, product_id)
+    rows = _group_listings(db, product_id)
+    return {"product_attributes": p.attributes, "stores_payload": _DEBUG.get(f"stores:{product_id}"),
+            "listings": [{"id": l.id, "seller": l.seller_name, "price": l.price, "url": l.product_url,
+                          "has_token": bool(l.product_attributes.get("_page_token")),
+                          "google_link": bool(l.product_attributes.get("_google_link"))} for l in rows]}
+
+
 @router.get("/go/{listing_id}")
 def go_to_store(listing_id: int, db: Session = Depends(get_db)):
     """Redirect to the real store page for a live listing (resolved lazily, then cached)."""
